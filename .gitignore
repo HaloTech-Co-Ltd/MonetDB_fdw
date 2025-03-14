@@ -1,0 +1,4 @@
+# Generated subdirectories
+/.deps/
+/*.o
+/*.so
