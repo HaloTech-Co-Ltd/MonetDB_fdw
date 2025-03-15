@@ -61,8 +61,7 @@ PG_MODULE_MAGIC;
 				else if (dbh)				\
 					mapi_explain(dbh,stderr);	\
 				else					\
-					fprintf(stderr,"command failed\n"); \
-				exit(-1);				\
+					elog(ERROR, "command failed\n"); \
 			} while (0)
 
 /* Default CPU cost to start up a foreign query. */
@@ -443,6 +442,11 @@ static TupleTableSlot **execute_foreign_modify(EState *estate,
 												TupleTableSlot **slots,
 												TupleTableSlot **planSlots,
 												int *numSlots);
+static const char **convert_prep_stmt_params(MonetdbFdwModifyState *fmstate,
+													ItemPointer tupleid,
+													TupleTableSlot **slots,
+													int numSlots);
+static const char *replaceDollarNumbers(const char* input);
 /*
  * Foreign-data wrapper handler function: return a struct with pointers
  * to my callback routines.
@@ -1757,13 +1761,6 @@ MonetDB_BeginForeignModify(ModifyTableState *mtstate,
 	List	   *retrieved_attrs;
 	RangeTblEntry *rte;
 
-	/*
-	 * Do nothing in EXPLAIN (no ANALYZE) case.  resultRelInfo->ri_FdwState
-	 * stays NULL.
-	 */
-	if (eflags & EXEC_FLAG_EXPLAIN_ONLY)
-		return;
-
 	/* Deconstruct fdw_private data. */
 	query = strVal(list_nth(fdw_private,
 							FdwModifyPrivateUpdateSql));
@@ -1895,7 +1892,128 @@ static void
 MonetDB_BeginForeignInsert(ModifyTableState *mtstate,
 						   ResultRelInfo *resultRelInfo)
 {
-	elog(ERROR, "MonetDB_BeginForeignInsert not supported yet");
+	MonetdbFdwModifyState *fmstate;
+	ModifyTable *plan = castNode(ModifyTable, mtstate->ps.plan);
+	EState	   *estate = mtstate->ps.state;
+	Index		resultRelation;
+	Relation	rel = resultRelInfo->ri_RelationDesc;
+	RangeTblEntry *rte;
+	TupleDesc	tupdesc = RelationGetDescr(rel);
+	int			attnum;
+	int			values_end_len;
+	StringInfoData sql;
+	List	   *targetAttrs = NIL;
+	List	   *retrieved_attrs = NIL;
+	bool		doNothing = false;
+
+	/*
+	 * If the foreign table we are about to insert routed rows into is also an
+	 * UPDATE subplan result rel that will be updated later, proceeding with
+	 * the INSERT will result in the later UPDATE incorrectly modifying those
+	 * routed rows, so prevent the INSERT --- it would be nice if we could
+	 * handle this case; but for now, throw an error for safety.
+	 */
+	if (plan && plan->operation == CMD_UPDATE &&
+		(resultRelInfo->ri_usesFdwDirectModify ||
+		 resultRelInfo->ri_FdwState))
+		ereport(ERROR,
+				(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+				 errmsg("cannot route tuples into foreign table to be updated \"%s\"",
+						RelationGetRelationName(rel))));
+
+	initStringInfo(&sql);
+
+	/* We transmit all columns that are defined in the foreign table. */
+	for (attnum = 1; attnum <= tupdesc->natts; attnum++)
+	{
+		Form_pg_attribute attr = TupleDescAttr(tupdesc, attnum - 1);
+
+		if (!attr->attisdropped)
+			targetAttrs = lappend_int(targetAttrs, attnum);
+	}
+
+	/* Check if we add the ON CONFLICT clause to the remote query. */
+	if (plan)
+	{
+		OnConflictAction onConflictAction = plan->onConflictAction;
+
+		/* We only support DO NOTHING without an inference specification. */
+		if (onConflictAction == ONCONFLICT_NOTHING)
+			doNothing = true;
+		else if (onConflictAction != ONCONFLICT_NONE)
+			elog(ERROR, "unexpected ON CONFLICT specification: %d",
+				 (int) onConflictAction);
+	}
+
+	/*
+	 * If the foreign table is a partition that doesn't have a corresponding
+	 * RTE entry, we need to create a new RTE describing the foreign table for
+	 * use by deparseInsertSql and create_foreign_modify() below, after first
+	 * copying the parent's RTE and modifying some fields to describe the
+	 * foreign partition to work on. However, if this is invoked by UPDATE,
+	 * the existing RTE may already correspond to this partition if it is one
+	 * of the UPDATE subplan target rels; in that case, we can just use the
+	 * existing RTE as-is.
+	 */
+	if (resultRelInfo->ri_RangeTableIndex == 0)
+	{
+		ResultRelInfo *rootResultRelInfo = resultRelInfo->ri_RootResultRelInfo;
+
+		rte = exec_rt_fetch(rootResultRelInfo->ri_RangeTableIndex, estate);
+		rte = copyObject(rte);
+		rte->relid = RelationGetRelid(rel);
+		rte->relkind = RELKIND_FOREIGN_TABLE;
+
+		/*
+		 * For UPDATE, we must use the RT index of the first subplan target
+		 * rel's RTE, because the core code would have built expressions for
+		 * the partition, such as RETURNING, using that RT index as varno of
+		 * Vars contained in those expressions.
+		 */
+		if (plan && plan->operation == CMD_UPDATE &&
+			rootResultRelInfo->ri_RangeTableIndex == plan->rootRelation)
+			resultRelation = mtstate->resultRelInfo[0].ri_RangeTableIndex;
+		else
+			resultRelation = rootResultRelInfo->ri_RangeTableIndex;
+	}
+	else
+	{
+		resultRelation = resultRelInfo->ri_RangeTableIndex;
+		rte = exec_rt_fetch(resultRelation, estate);
+	}
+
+	/* Construct the SQL command string. */
+	deparseInsertSql(&sql, rte, resultRelation, rel, targetAttrs, doNothing,
+					 resultRelInfo->ri_WithCheckOptions,
+					 resultRelInfo->ri_returningList,
+					 &retrieved_attrs, &values_end_len);
+
+	/* Construct an execution state. */
+	fmstate = create_foreign_modify(mtstate->ps.state,
+									rte,
+									resultRelInfo,
+									CMD_INSERT,
+									NULL,
+									sql.data,
+									targetAttrs,
+									values_end_len,
+									retrieved_attrs != NIL,
+									retrieved_attrs);
+
+	fmstate->query = pstrdup(sql.data);
+	/*
+	 * If the given resultRelInfo already has MonetdbFdwModifyState set, it means
+	 * the foreign table is an UPDATE subplan result rel; in which case, store
+	 * the resulting state into the aux_fmstate of the MonetdbFdwModifyState.
+	 */
+	if (resultRelInfo->ri_FdwState)
+	{
+		Assert(plan && plan->operation == CMD_UPDATE);
+		Assert(resultRelInfo->ri_usesFdwDirectModify == false);
+		((MonetdbFdwModifyState *) resultRelInfo->ri_FdwState)->aux_fmstate = fmstate;
+	}
+	else
+		resultRelInfo->ri_FdwState = fmstate;
 }
 
 /*
@@ -2048,7 +2166,10 @@ MonetDB_ExplainForeignModify(ModifyTableState *mtstate,
 							 int subplan_index,
 							 ExplainState *es)
 {
-	elog(ERROR, "MonetDB_ExplainForeignModify not supported yet");
+	MonetdbFdwModifyState *fsstate = (MonetdbFdwModifyState *) rinfo->ri_FdwState;
+
+	/* show query */
+	ExplainPropertyText("MonetDB statement", fsstate->query, es);
 }
 
 /*
@@ -4392,6 +4513,7 @@ static TupleTableSlot **execute_foreign_modify(EState *estate,
 	const char **p_values;
 	int			n_rows;
 	StringInfoData sql;
+	MapiHdl result = NULL;
 
 	/* The operation should be INSERT, UPDATE, or DELETE */
 	Assert(operation == CMD_INSERT ||
@@ -4445,27 +4567,31 @@ static TupleTableSlot **execute_foreign_modify(EState *estate,
 	}
 
 	/* Convert parameters needed by prepared statement to text form */
-	// p_values = convert_prep_stmt_params(fmstate, ctid, slots, *numSlots);
+	p_values = convert_prep_stmt_params(fmstate, ctid, slots, *numSlots);
 
 	/*
-	 * Execute statement.
+	 * Execute the prepared statement.
 	 * Get the result, and check for success.
-	 * "fmstate->query" is usually a serialized statement,
-	 * so here we choose "estate->es_sourceText". In this initial version,
-	 * I chose not to support prepare for now
 	 */
-	if ((fmstate->hdl = mapi_query(fmstate->conn, estate->es_sourceText)) == NULL || mapi_error(fmstate->conn))
-		die(fmstate->conn, fmstate->hdl);
+	result = mapi_prepare(fmstate->conn, replaceDollarNumbers(fmstate->query));
+	for(int i = 0; i < fmstate->p_nums; i++)
+    {
+		/* bind value */
+        mapi_param_string(result, i, MAPI_VARCHAR, (char *) p_values[i], NULL);
+    }
 
-	n_rows = mapi_get_field_count(fmstate->hdl);
+    mapi_execute(result);
+	if (result == NULL || mapi_error(fmstate->conn))
+		die(fmstate->conn, result);
+
+	n_rows = mapi_get_field_count(result);
 	/* Check number of rows affected, and fetch RETURNING tuple if any */
 	if (fmstate->has_returning)
 	{
 		if (n_rows > 0)
 		{
-			// store_returning_result(fmstate, slots[0], fmstate->hdl);
 			HeapTuple	newtup;
-			newtup = make_tuple_from_result_row(fmstate->hdl, 0,
+			newtup = make_tuple_from_result_row(result, 0,
 												fmstate->rel,
 												fmstate->attinmeta,
 												fmstate->retrieved_attrs,
@@ -4488,4 +4614,131 @@ static TupleTableSlot **execute_foreign_modify(EState *estate,
 	 * Return NULL if nothing was inserted/updated/deleted on the remote end
 	 */
 	return (n_rows > 0) ? slots : NULL;
+}
+
+/*
+ * convert_prep_stmt_params
+ *		Create array of text strings representing parameter values
+ *
+ * tupleid is ctid to send, or NULL if none
+ * slot is slot to get remaining parameters from, or NULL if none
+ *
+ * Data is constructed in temp_cxt; caller should reset that after use.
+ */
+static const char **
+convert_prep_stmt_params(MonetdbFdwModifyState *fmstate,
+						 ItemPointer tupleid,
+						 TupleTableSlot **slots,
+						 int numSlots)
+{
+	const char **p_values;
+	int			i;
+	int			j;
+	int			pindex = 0;
+	MemoryContext oldcontext;
+
+	oldcontext = MemoryContextSwitchTo(fmstate->temp_cxt);
+
+	p_values = (const char **) palloc(sizeof(char *) * fmstate->p_nums * numSlots);
+
+	/* ctid is provided only for UPDATE/DELETE, which don't allow batching */
+	Assert(!(tupleid != NULL && numSlots > 1));
+
+	/* 1st parameter should be ctid, if it's in use */
+	if (tupleid != NULL)
+	{
+		Assert(numSlots == 1);
+		/* don't need set_transmission_modes for TID output */
+		p_values[pindex] = OutputFunctionCall(&fmstate->p_flinfo[pindex],
+											  PointerGetDatum(tupleid));
+		pindex++;
+	}
+
+	/* get following parameters from slots */
+	if (slots != NULL && fmstate->target_attrs != NIL)
+	{
+		TupleDesc	tupdesc = RelationGetDescr(fmstate->rel);
+		int			nestlevel;
+		ListCell   *lc;
+
+		nestlevel = set_transmission_modes();
+
+		for (i = 0; i < numSlots; i++)
+		{
+			j = (tupleid != NULL) ? 1 : 0;
+			foreach(lc, fmstate->target_attrs)
+			{
+				int			attnum = lfirst_int(lc);
+				Form_pg_attribute attr = TupleDescAttr(tupdesc, attnum - 1);
+				Datum		value;
+				bool		isnull;
+
+				/* Ignore generated columns; they are set to DEFAULT */
+				if (attr->attgenerated)
+					continue;
+				value = slot_getattr(slots[i], attnum, &isnull);
+				if (isnull)
+					p_values[pindex] = NULL;
+				else
+					p_values[pindex] = OutputFunctionCall(&fmstate->p_flinfo[j],
+														  value);
+				pindex++;
+				j++;
+			}
+		}
+
+		reset_transmission_modes(nestlevel);
+	}
+
+	Assert(pindex == fmstate->p_nums * numSlots);
+
+	MemoryContextSwitchTo(oldcontext);
+
+	return p_values;
+}
+
+/* 
+ * INSERT INTO zm.emp(name, age) VALUES ($1, $2)
+ * INSERT INTO zm.emp(name, age) VALUES (?, ?)
+ */
+static const char * 
+replaceDollarNumbers(const char *input)
+{
+    char	*result = NULL;
+	size_t 	i = 0, 
+			j = 0, 
+			len = 0;
+
+    if (input == NULL)
+	{
+		elog(ERROR, "input is NULL");
+        return NULL;
+	}
+
+   	len = strlen(input);
+    result = (char *) palloc0((len + 1) * sizeof(char));
+    if (result == NULL)
+        return NULL;
+
+    while (input[i] != '\0')
+	{
+        if (input[i] == '$') 
+		{
+            if (isdigit((unsigned char)input[i + 1])) 
+			{
+                result[j++] = '?';
+                i++;
+                while (isdigit((unsigned char)input[i])) 
+				{
+                    i++;
+                }
+                continue;
+            }
+        }
+        result[j++] = input[i++];
+    }
+    result[j] = '\0';
+
+    result = (char *) repalloc(result, (j + 1) * sizeof(char));
+    return (const char *) result;
 }

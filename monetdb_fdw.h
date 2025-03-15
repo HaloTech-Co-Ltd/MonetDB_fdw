@@ -19,6 +19,26 @@
 #include "nodes/pathnodes.h"
 #include "utils/relcache.h"
 
+#define MAPI_AUTO	0	/* automatic type detection */
+#define MAPI_TINY	1
+#define MAPI_UTINY	2
+#define MAPI_SHORT	3
+#define MAPI_USHORT	4
+#define MAPI_INT	5
+#define MAPI_UINT	6
+#define MAPI_LONG	7
+#define MAPI_ULONG	8
+#define MAPI_LONGLONG	9
+#define MAPI_ULONGLONG	10
+#define MAPI_CHAR	11
+#define MAPI_VARCHAR	12
+#define MAPI_FLOAT	13
+#define MAPI_DOUBLE	14
+#define MAPI_DATE	15
+#define MAPI_TIME	16
+#define MAPI_DATETIME	17
+#define MAPI_NUMERIC	18
+
 /*
  * FDW-specific planner information kept in RelOptInfo.fdw_private for a
  * postgres_fdw foreign table.  For a baserel, this struct is created by
