@@ -243,7 +243,7 @@ is_foreign_expr(PlannerInfo *root,
 {
 	foreign_glob_cxt glob_cxt;
 	foreign_loc_cxt loc_cxt;
-	PgFdwRelationInfo *fpinfo = (PgFdwRelationInfo *) (baserel->fdw_private);
+	MonetdbFdwRelationInfo *fpinfo = (MonetdbFdwRelationInfo *) (baserel->fdw_private);
 
 	/*
 	 * Check that the expression consists of nodes that are safe to execute
@@ -311,7 +311,7 @@ foreign_expr_walker(Node *node,
 					foreign_loc_cxt *case_arg_cxt)
 {
 	bool		check_type = true;
-	PgFdwRelationInfo *fpinfo;
+	MonetdbFdwRelationInfo *fpinfo;
 	foreign_loc_cxt inner_cxt;
 	Oid			collation;
 	FDWCollateState state;
@@ -321,7 +321,7 @@ foreign_expr_walker(Node *node,
 		return true;
 
 	/* May need server info from baserel's fdw_private struct */
-	fpinfo = (PgFdwRelationInfo *) (glob_cxt->foreignrel->fdw_private);
+	fpinfo = (MonetdbFdwRelationInfo *) (glob_cxt->foreignrel->fdw_private);
 
 	/* Set up inner_cxt for possible recursion to child nodes */
 	inner_cxt.collation = InvalidOid;
@@ -1088,7 +1088,7 @@ is_foreign_param(PlannerInfo *root,
 			{
 				/* It would have to be sent unless it's a foreign Var */
 				Var		   *var = (Var *) expr;
-				PgFdwRelationInfo *fpinfo = (PgFdwRelationInfo *) (baserel->fdw_private);
+				MonetdbFdwRelationInfo *fpinfo = (MonetdbFdwRelationInfo *) (baserel->fdw_private);
 				Relids		relids;
 
 				if (IS_UPPER_REL(baserel))
@@ -1121,7 +1121,7 @@ is_foreign_pathkey(PlannerInfo *root,
 				   PathKey *pathkey)
 {
 	EquivalenceClass *pathkey_ec = pathkey->pk_eclass;
-	PgFdwRelationInfo *fpinfo = (PgFdwRelationInfo *) baserel->fdw_private;
+	MonetdbFdwRelationInfo *fpinfo = (MonetdbFdwRelationInfo *) baserel->fdw_private;
 
 	/*
 	 * is_foreign_expr would detect volatile expressions as well, but checking
@@ -1172,7 +1172,7 @@ List *
 build_tlist_to_deparse(RelOptInfo *foreignrel)
 {
 	List	   *tlist = NIL;
-	PgFdwRelationInfo *fpinfo = (PgFdwRelationInfo *) foreignrel->fdw_private;
+	MonetdbFdwRelationInfo *fpinfo = (MonetdbFdwRelationInfo *) foreignrel->fdw_private;
 	ListCell   *lc;
 
 	/*
@@ -1232,7 +1232,7 @@ deparseSelectStmtForRel(StringInfo buf, PlannerInfo *root, RelOptInfo *rel,
 						List **retrieved_attrs, List **params_list)
 {
 	deparse_expr_cxt context;
-	PgFdwRelationInfo *fpinfo = (PgFdwRelationInfo *) rel->fdw_private;
+	MonetdbFdwRelationInfo *fpinfo = (MonetdbFdwRelationInfo *) rel->fdw_private;
 	List	   *quals;
 
 	/*
@@ -1258,9 +1258,9 @@ deparseSelectStmtForRel(StringInfo buf, PlannerInfo *root, RelOptInfo *rel,
 	 */
 	if (IS_UPPER_REL(rel))
 	{
-		PgFdwRelationInfo *ofpinfo;
+		MonetdbFdwRelationInfo *ofpinfo;
 
-		ofpinfo = (PgFdwRelationInfo *) fpinfo->outerrel->fdw_private;
+		ofpinfo = (MonetdbFdwRelationInfo *) fpinfo->outerrel->fdw_private;
 		quals = ofpinfo->remote_conds;
 	}
 	else
@@ -1314,7 +1314,7 @@ deparseSelectSql(List *tlist, bool is_subquery, List **retrieved_attrs,
 	StringInfo	buf = context->buf;
 	RelOptInfo *foreignrel = context->foreignrel;
 	PlannerInfo *root = context->root;
-	PgFdwRelationInfo *fpinfo = (PgFdwRelationInfo *) foreignrel->fdw_private;
+	MonetdbFdwRelationInfo *fpinfo = (MonetdbFdwRelationInfo *) foreignrel->fdw_private;
 
 	/*
 	 * Construct SELECT list
@@ -1481,7 +1481,7 @@ deparseLockingClause(deparse_expr_cxt *context)
 	StringInfo	buf = context->buf;
 	PlannerInfo *root = context->root;
 	RelOptInfo *rel = context->scanrel;
-	PgFdwRelationInfo *fpinfo = (PgFdwRelationInfo *) rel->fdw_private;
+	MonetdbFdwRelationInfo *fpinfo = (MonetdbFdwRelationInfo *) rel->fdw_private;
 	int			relid = -1;
 
 	while ((relid = bms_next_member(rel->relids, relid)) >= 0)
@@ -1718,7 +1718,7 @@ deparseFromExprForRel(StringInfo buf, PlannerInfo *root, RelOptInfo *foreignrel,
 					  bool use_alias, Index ignore_rel, List **ignore_conds,
 					  List **params_list)
 {
-	PgFdwRelationInfo *fpinfo = (PgFdwRelationInfo *) foreignrel->fdw_private;
+	MonetdbFdwRelationInfo *fpinfo = (MonetdbFdwRelationInfo *) foreignrel->fdw_private;
 
 	if (IS_JOIN_REL(foreignrel))
 	{
@@ -1869,7 +1869,7 @@ deparseRangeTblRef(StringInfo buf, PlannerInfo *root, RelOptInfo *foreignrel,
 				   bool make_subquery, Index ignore_rel, List **ignore_conds,
 				   List **params_list)
 {
-	PgFdwRelationInfo *fpinfo = (PgFdwRelationInfo *) foreignrel->fdw_private;
+	MonetdbFdwRelationInfo *fpinfo = (MonetdbFdwRelationInfo *) foreignrel->fdw_private;
 
 	/* Should only be called in these cases. */
 	Assert(IS_SIMPLE_REL(foreignrel) || IS_JOIN_REL(foreignrel));
@@ -2387,114 +2387,6 @@ deparseAnalyzeInfoSql(StringInfo buf, Relation rel)
 	appendStringInfoString(buf, "SELECT reltuples, relkind FROM pg_catalog.pg_class WHERE oid = ");
 	deparseStringLiteral(buf, relname.data);
 	appendStringInfoString(buf, "::pg_catalog.regclass");
-}
-
-/*
- * Construct SELECT statement to acquire sample rows of given relation.
- *
- * SELECT command is appended to buf, and list of columns retrieved
- * is returned to *retrieved_attrs.
- *
- * We only support sampling methods we can decide based on server version.
- * Allowing custom TSM modules (like tsm_system_rows) might be useful, but it
- * would require detecting which extensions are installed, to allow automatic
- * fall-back. Moreover, the methods may use different parameters like number
- * of rows (and not sampling rate). So we leave this for future improvements.
- *
- * Using random() to sample rows on the remote server has the advantage that
- * this works on all PostgreSQL versions (unlike TABLESAMPLE), and that it
- * does the sampling on the remote side (without transferring everything and
- * then discarding most rows).
- *
- * The disadvantage is that we still have to read all rows and evaluate the
- * random(), while TABLESAMPLE (at least with the "system" method) may skip.
- * It's not that different from the "bernoulli" method, though.
- *
- * We could also do "ORDER BY random() LIMIT x", which would always pick
- * the expected number of rows, but it requires sorting so it may be much
- * more expensive (particularly on large tables, which is what the
- * remote sampling is meant to improve).
- */
-void
-deparseAnalyzeSql(StringInfo buf, Relation rel,
-				  PgFdwSamplingMethod sample_method, double sample_frac,
-				  List **retrieved_attrs)
-{
-	Oid			relid = RelationGetRelid(rel);
-	TupleDesc	tupdesc = RelationGetDescr(rel);
-	int			i;
-	char	   *colname;
-	List	   *options;
-	ListCell   *lc;
-	bool		first = true;
-
-	*retrieved_attrs = NIL;
-
-	appendStringInfoString(buf, "SELECT ");
-	for (i = 0; i < tupdesc->natts; i++)
-	{
-		/* Ignore dropped columns. */
-		if (TupleDescAttr(tupdesc, i)->attisdropped)
-			continue;
-
-		if (!first)
-			appendStringInfoString(buf, ", ");
-		first = false;
-
-		/* Use attribute name or column_name option. */
-		colname = NameStr(TupleDescAttr(tupdesc, i)->attname);
-		options = GetForeignColumnOptions(relid, i + 1);
-
-		foreach(lc, options)
-		{
-			DefElem    *def = (DefElem *) lfirst(lc);
-
-			if (strcmp(def->defname, "column_name") == 0)
-			{
-				colname = defGetString(def);
-				break;
-			}
-		}
-
-		appendStringInfoString(buf, quote_identifier(colname));
-
-		*retrieved_attrs = lappend_int(*retrieved_attrs, i + 1);
-	}
-
-	/* Don't generate bad syntax for zero-column relation. */
-	if (first)
-		appendStringInfoString(buf, "NULL");
-
-	/*
-	 * Construct FROM clause, and perhaps WHERE clause too, depending on the
-	 * selected sampling method.
-	 */
-	appendStringInfoString(buf, " FROM ");
-	deparseRelation(buf, rel);
-
-	switch (sample_method)
-	{
-		case ANALYZE_SAMPLE_OFF:
-			/* nothing to do here */
-			break;
-
-		case ANALYZE_SAMPLE_RANDOM:
-			appendStringInfo(buf, " WHERE pg_catalog.random() < %f", sample_frac);
-			break;
-
-		case ANALYZE_SAMPLE_SYSTEM:
-			appendStringInfo(buf, " TABLESAMPLE SYSTEM(%f)", (100.0 * sample_frac));
-			break;
-
-		case ANALYZE_SAMPLE_BERNOULLI:
-			appendStringInfo(buf, " TABLESAMPLE BERNOULLI(%f)", (100.0 * sample_frac));
-			break;
-
-		case ANALYZE_SAMPLE_AUTO:
-			/* should have been resolved into actual method */
-			elog(ERROR, "unexpected sampling method");
-			break;
-	}
 }
 
 /*
@@ -3969,7 +3861,7 @@ deparseSortGroupClause(Index ref, List *tlist, bool force_colno,
 static bool
 is_subquery_var(Var *node, RelOptInfo *foreignrel, int *relno, int *colno)
 {
-	PgFdwRelationInfo *fpinfo = (PgFdwRelationInfo *) foreignrel->fdw_private;
+	MonetdbFdwRelationInfo *fpinfo = (MonetdbFdwRelationInfo *) foreignrel->fdw_private;
 	RelOptInfo *outerrel = fpinfo->outerrel;
 	RelOptInfo *innerrel = fpinfo->innerrel;
 
@@ -4032,7 +3924,7 @@ static void
 get_relation_column_alias_ids(Var *node, RelOptInfo *foreignrel,
 							  int *relno, int *colno)
 {
-	PgFdwRelationInfo *fpinfo = (PgFdwRelationInfo *) foreignrel->fdw_private;
+	MonetdbFdwRelationInfo *fpinfo = (MonetdbFdwRelationInfo *) foreignrel->fdw_private;
 	int			i;
 	ListCell   *lc;
 

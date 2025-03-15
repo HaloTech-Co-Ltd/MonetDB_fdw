@@ -160,9 +160,6 @@ typedef struct MonetdbFdwScanState
 	/* for remote query execution */
 	Mapi 	   conn;			/* connection for the scan */
 	MapiHdl 	hdl;
-	PgFdwConnState *conn_state; /* extra per-connection state */
-	unsigned int cursor_number; /* quasi-unique ID for my cursor */
-	bool		cursor_exists;	/* have we created the cursor? */
 	int			numParams;		/* number of parameters passed to query */
 	FmgrInfo   *param_flinfo;	/* output conversion functions for them */
 	List	   *param_exprs;	/* executable expressions for param values */
@@ -188,104 +185,6 @@ typedef struct MonetdbFdwScanState
 } MonetdbFdwScanState;
 
 /*
- * Execution state of a foreign insert/update/delete operation.
- */
-typedef struct PgFdwModifyState
-{
-	Relation	rel;			/* relcache entry for the foreign table */
-	AttInMetadata *attinmeta;	/* attribute datatype conversion metadata */
-
-	/* for remote query execution */
-	PGconn	   *conn;			/* connection for the scan */
-	PgFdwConnState *conn_state; /* extra per-connection state */
-	char	   *p_name;			/* name of prepared statement, if created */
-
-	/* extracted fdw_private data */
-	char	   *query;			/* text of INSERT/UPDATE/DELETE command */
-	char	   *orig_query;		/* original text of INSERT command */
-	List	   *target_attrs;	/* list of target attribute numbers */
-	int			values_end;		/* length up to the end of VALUES */
-	int			batch_size;		/* value of FDW option "batch_size" */
-	bool		has_returning;	/* is there a RETURNING clause? */
-	List	   *retrieved_attrs;	/* attr numbers retrieved by RETURNING */
-
-	/* info about parameters for prepared statement */
-	AttrNumber	ctidAttno;		/* attnum of input resjunk ctid column */
-	int			p_nums;			/* number of parameters to transmit */
-	FmgrInfo   *p_flinfo;		/* output conversion functions for them */
-
-	/* batch operation stuff */
-	int			num_slots;		/* number of slots to insert */
-
-	/* working memory context */
-	MemoryContext temp_cxt;		/* context for per-tuple temporary data */
-
-	/* for update row movement if subplan result rel */
-	struct PgFdwModifyState *aux_fmstate;	/* foreign-insert state, if
-											 * created */
-} PgFdwModifyState;
-
-/*
- * Execution state of a foreign scan that modifies a foreign table directly.
- */
-typedef struct PgFdwDirectModifyState
-{
-	Relation	rel;			/* relcache entry for the foreign table */
-	AttInMetadata *attinmeta;	/* attribute datatype conversion metadata */
-
-	/* extracted fdw_private data */
-	char	   *query;			/* text of UPDATE/DELETE command */
-	bool		has_returning;	/* is there a RETURNING clause? */
-	List	   *retrieved_attrs;	/* attr numbers retrieved by RETURNING */
-	bool		set_processed;	/* do we set the command es_processed? */
-
-	/* for remote query execution */
-	PGconn	   *conn;			/* connection for the update */
-	PgFdwConnState *conn_state; /* extra per-connection state */
-	int			numParams;		/* number of parameters passed to query */
-	FmgrInfo   *param_flinfo;	/* output conversion functions for them */
-	List	   *param_exprs;	/* executable expressions for param values */
-	const char **param_values;	/* textual values of query parameters */
-
-	/* for storing result tuples */
-	PGresult   *result;			/* result for query */
-	int			num_tuples;		/* # of result tuples */
-	int			next_tuple;		/* index of next one to return */
-	Relation	resultRel;		/* relcache entry for the target relation */
-	AttrNumber *attnoMap;		/* array of attnums of input user columns */
-	AttrNumber	ctidAttno;		/* attnum of input ctid column */
-	AttrNumber	oidAttno;		/* attnum of input oid column */
-	bool		hasSystemCols;	/* are there system columns of resultRel? */
-
-	/* working memory context */
-	MemoryContext temp_cxt;		/* context for per-tuple temporary data */
-} PgFdwDirectModifyState;
-
-/*
- * Workspace for analyzing a foreign table.
- */
-typedef struct PgFdwAnalyzeState
-{
-	Relation	rel;			/* relcache entry for the foreign table */
-	AttInMetadata *attinmeta;	/* attribute datatype conversion metadata */
-	List	   *retrieved_attrs;	/* attr numbers retrieved by query */
-
-	/* collected sample rows */
-	HeapTuple  *rows;			/* array of size targrows */
-	int			targrows;		/* target # of sample rows */
-	int			numrows;		/* # of sample rows collected */
-
-	/* for random sampling */
-	double		samplerows;		/* # of rows fetched */
-	double		rowstoskip;		/* # of rows to skip before next sample */
-	ReservoirStateData rstate;	/* state for reservoir sampling */
-
-	/* working memory contexts */
-	MemoryContext anl_cxt;		/* context for per-analyze lifespan data */
-	MemoryContext temp_cxt;		/* context for per-tuple temporary data */
-} PgFdwAnalyzeState;
-
-/*
  * This enum describes what's kept in the fdw_private list for a ForeignPath.
  * We store:
  *
@@ -309,7 +208,7 @@ typedef struct
 	double		limit_tuples;
 	int64		count_est;
 	int64		offset_est;
-} PgFdwPathExtraData;
+} MonetdbFdwPathExtraData;
 
 /*
  * Identify the attribute where data conversion fails.
@@ -440,15 +339,9 @@ static void estimate_path_cost_size(PlannerInfo *root,
 									RelOptInfo *foreignrel,
 									List *param_join_conds,
 									List *pathkeys,
-									PgFdwPathExtraData *fpextra,
+									MonetdbFdwPathExtraData *fpextra,
 									double *p_rows, int *p_width,
 									Cost *p_startup_cost, Cost *p_total_cost);
-static void get_remote_estimate(const char *sql,
-								PGconn *conn,
-								double *rows,
-								int *width,
-								Cost *startup_cost,
-								Cost *total_cost);
 static void adjust_foreign_grouping_path_cost(PlannerInfo *root,
 											  List *pathkeys,
 											  double retrieved_rows,
@@ -459,66 +352,13 @@ static void adjust_foreign_grouping_path_cost(PlannerInfo *root,
 static bool ec_member_matches_foreign(PlannerInfo *root, RelOptInfo *rel,
 									  EquivalenceClass *ec, EquivalenceMember *em,
 									  void *arg);
-static void create_cursor(ForeignScanState *node);
 static void fetch_more_data(ForeignScanState *node);
-static void close_cursor(PGconn *conn, unsigned int cursor_number,
-						 PgFdwConnState *conn_state);
-static PgFdwModifyState *create_foreign_modify(EState *estate,
-											   RangeTblEntry *rte,
-											   ResultRelInfo *resultRelInfo,
-											   CmdType operation,
-											   Plan *subplan,
-											   char *query,
-											   List *target_attrs,
-											   int values_end,
-											   bool has_returning,
-											   List *retrieved_attrs);
-static TupleTableSlot **execute_foreign_modify(EState *estate,
-											   ResultRelInfo *resultRelInfo,
-											   CmdType operation,
-											   TupleTableSlot **slots,
-											   TupleTableSlot **planSlots,
-											   int *numSlots);
-static void prepare_foreign_modify(PgFdwModifyState *fmstate);
-static const char **convert_prep_stmt_params(PgFdwModifyState *fmstate,
-											 ItemPointer tupleid,
-											 TupleTableSlot **slots,
-											 int numSlots);
-static void store_returning_result(PgFdwModifyState *fmstate,
-								   TupleTableSlot *slot, PGresult *res);
-static void finish_foreign_modify(PgFdwModifyState *fmstate);
-static void deallocate_query(PgFdwModifyState *fmstate);
-static List *build_remote_returning(Index rtindex, Relation rel,
-									List *returningList);
-static void rebuild_fdw_scan_tlist(ForeignScan *fscan, List *tlist);
-static void execute_dml_stmt(ForeignScanState *node);
-static TupleTableSlot *get_returning_data(ForeignScanState *node);
-static void init_returning_filter(PgFdwDirectModifyState *dmstate,
-								  List *fdw_scan_tlist,
-								  Index rtindex);
-static TupleTableSlot *apply_returning_filter(PgFdwDirectModifyState *dmstate,
-											  ResultRelInfo *resultRelInfo,
-											  TupleTableSlot *slot,
-											  EState *estate);
 static void prepare_query_params(PlanState *node,
 								 List *fdw_exprs,
 								 int numParams,
 								 FmgrInfo **param_flinfo,
 								 List **param_exprs,
 								 const char ***param_values);
-static void process_query_params(ExprContext *econtext,
-								 FmgrInfo *param_flinfo,
-								 List *param_exprs,
-								 const char **param_values);
-static int	MonetDB_AcquireSampleRowsFunc(Relation relation, int elevel,
-										  HeapTuple *rows, int targrows,
-										  double *totalrows,
-										  double *totaldeadrows);
-static void analyze_row_processor(PGresult *res, int row,
-								  PgFdwAnalyzeState *astate);
-static void produce_tuple_asynchronously(AsyncRequest *areq, bool fetch);
-static void fetch_more_data_begin(AsyncRequest *areq);
-static void complete_pending_request(AsyncRequest *areq);
 static HeapTuple make_tuple_from_result_row(MapiHdl res,
 											int row,
 											Relation rel,
@@ -527,9 +367,6 @@ static HeapTuple make_tuple_from_result_row(MapiHdl res,
 											ForeignScanState *fsstate,
 											MemoryContext temp_context);
 static void conversion_error_callback(void *arg);
-static bool foreign_join_ok(PlannerInfo *root, RelOptInfo *joinrel,
-							JoinType jointype, RelOptInfo *outerrel, RelOptInfo *innerrel,
-							JoinPathExtraData *extra);
 static bool foreign_grouping_ok(PlannerInfo *root, RelOptInfo *grouped_rel,
 								Node *havingQual);
 static List *get_useful_pathkeys_for_relation(PlannerInfo *root,
@@ -548,13 +385,10 @@ static void add_foreign_final_paths(PlannerInfo *root,
 									RelOptInfo *input_rel,
 									RelOptInfo *final_rel,
 									FinalPathExtraData *extra);
-static void apply_server_options(PgFdwRelationInfo *fpinfo);
-static void apply_table_options(PgFdwRelationInfo *fpinfo);
-static void merge_fdw_options(PgFdwRelationInfo *fpinfo,
-							  const PgFdwRelationInfo *fpinfo_o,
-							  const PgFdwRelationInfo *fpinfo_i);
-static int	get_batch_size_option(Relation rel);
-
+static void apply_table_options(MonetdbFdwRelationInfo *fpinfo);
+static void merge_fdw_options(MonetdbFdwRelationInfo *fpinfo,
+							  const MonetdbFdwRelationInfo *fpinfo_o,
+							  const MonetdbFdwRelationInfo *fpinfo_i);
 
 /*
  * Foreign-data wrapper handler function: return a struct with pointers
@@ -635,14 +469,14 @@ MonetDB_GetForeignRelSize(PlannerInfo *root,
 						  RelOptInfo *baserel,
 						  Oid foreigntableid)
 {
-	PgFdwRelationInfo *fpinfo;
+	MonetdbFdwRelationInfo *fpinfo;
 	ListCell   *lc;
 
 	/*
-	 * We use PgFdwRelationInfo to pass various information to subsequent
+	 * We use MonetdbFdwRelationInfo to pass various information to subsequent
 	 * functions.
 	 */
-	fpinfo = (PgFdwRelationInfo *) palloc0(sizeof(PgFdwRelationInfo));
+	fpinfo = (MonetdbFdwRelationInfo *) palloc0(sizeof(MonetdbFdwRelationInfo));
 	baserel->fdw_private = (void *) fpinfo;
 
 	/* Base foreign tables need to be pushed down always. */
@@ -664,7 +498,6 @@ MonetDB_GetForeignRelSize(PlannerInfo *root,
 	fpinfo->fetch_size = 100;
 	fpinfo->async_capable = false;
 
-	apply_server_options(fpinfo);
 	apply_table_options(fpinfo);
 
 	/*
@@ -916,7 +749,7 @@ get_useful_pathkeys_for_relation(PlannerInfo *root, RelOptInfo *rel)
 {
 	List	   *useful_pathkeys_list = NIL;
 	List	   *useful_eclass_list;
-	PgFdwRelationInfo *fpinfo = (PgFdwRelationInfo *) rel->fdw_private;
+	MonetdbFdwRelationInfo *fpinfo = (MonetdbFdwRelationInfo *) rel->fdw_private;
 	EquivalenceClass *query_ec = NULL;
 	ListCell   *lc;
 
@@ -1023,7 +856,7 @@ MonetDB_GetForeignPaths(PlannerInfo *root,
 						RelOptInfo *baserel,
 						Oid foreigntableid)
 {
-	PgFdwRelationInfo *fpinfo = (PgFdwRelationInfo *) baserel->fdw_private;
+	MonetdbFdwRelationInfo *fpinfo = (MonetdbFdwRelationInfo *) baserel->fdw_private;
 	ForeignPath *path;
 	List	   *ppi_list;
 	ListCell   *lc;
@@ -1236,7 +1069,7 @@ MonetDB_GetForeignPlan(PlannerInfo *root,
 					   List *scan_clauses,
 					   Plan *outer_plan)
 {
-	PgFdwRelationInfo *fpinfo = (PgFdwRelationInfo *) foreignrel->fdw_private;
+	MonetdbFdwRelationInfo *fpinfo = (MonetdbFdwRelationInfo *) foreignrel->fdw_private;
 	Index		scan_relid;
 	List	   *fdw_private;
 	List	   *remote_exprs = NIL;
@@ -1571,10 +1404,6 @@ MonetDB_BeginForeignScan(ForeignScanState *node, int eflags)
 	 */
 	fsstate->conn = mapi_connect(host, atoi(port), user_str, password, "sql", dbname);
 
-	/* Assign a unique ID for my cursor */
-	fsstate->cursor_number = GetCursorNumber(fsstate->conn);
-	fsstate->cursor_exists = false;
-
 	/* Get private info created by planner functions. */
 	fsstate->query = strVal(list_nth(fsplan->fdw_private,
 									 FdwScanPrivateSelectSql));
@@ -1683,75 +1512,7 @@ MonetDB_IterateForeignScan(ForeignScanState *node)
 static void
 MonetDB_ReScanForeignScan(ForeignScanState *node)
 {
-	MonetdbFdwScanState *fsstate = (MonetdbFdwScanState *) node->fdw_state;
-	char		sql[64];
-	PGresult   *res;
-
-	/* If we haven't created the cursor yet, nothing to do. */
-	if (!fsstate->cursor_exists)
-		return;
-
-	/*
-	 * If the node is async-capable, and an asynchronous fetch for it has
-	 * begun, the asynchronous fetch might not have yet completed.  Check if
-	 * the node is async-capable, and an asynchronous fetch for it is still in
-	 * progress; if so, complete the asynchronous fetch before restarting the
-	 * scan.
-	 */
-	if (fsstate->async_capable &&
-		fsstate->conn_state->pendingAreq &&
-		fsstate->conn_state->pendingAreq->requestee == (PlanState *) node)
-		fetch_more_data(node);
-
-	/*
-	 * If any internal parameters affecting this node have changed, we'd
-	 * better destroy and recreate the cursor.  Otherwise, if the remote
-	 * server is v14 or older, rewinding it should be good enough; if not,
-	 * rewind is only allowed for scrollable cursors, but we don't have a way
-	 * to check the scrollability of it, so destroy and recreate it in any
-	 * case.  If we've only fetched zero or one batch, we needn't even rewind
-	 * the cursor, just rescan what we have.
-	 */
-	if (node->ss.ps.chgParam != NULL)
-	{
-		fsstate->cursor_exists = false;
-		snprintf(sql, sizeof(sql), "CLOSE c%u",
-				 fsstate->cursor_number);
-	}
-	else if (fsstate->fetch_ct_2 > 1)
-	{
-		if (PQserverVersion(fsstate->conn) < 150000)
-			snprintf(sql, sizeof(sql), "MOVE BACKWARD ALL IN c%u",
-					 fsstate->cursor_number);
-		else
-		{
-			fsstate->cursor_exists = false;
-			snprintf(sql, sizeof(sql), "CLOSE c%u",
-					 fsstate->cursor_number);
-		}
-	}
-	else
-	{
-		/* Easy: just rescan what we already have in memory, if anything */
-		fsstate->next_tuple = 0;
-		return;
-	}
-
-	/*
-	 * We don't use a PG_TRY block here, so be careful not to throw error
-	 * without releasing the PGresult.
-	 */
-	res = pgfdw_exec_query(fsstate->conn, sql, fsstate->conn_state);
-	if (PQresultStatus(res) != PGRES_COMMAND_OK)
-		pgfdw_report_error(ERROR, res, fsstate->conn, true, sql);
-	PQclear(res);
-
-	/* Now force a fresh FETCH. */
-	fsstate->tuples = NULL;
-	fsstate->num_tuples = 0;
-	fsstate->next_tuple = 0;
-	fsstate->fetch_ct_2 = 0;
-	fsstate->eof_reached = false;
+	elog(ERROR, "MonetDB_ReScanForeignScan not supported yet");
 }
 
 /*
@@ -1767,13 +1528,12 @@ MonetDB_EndForeignScan(ForeignScanState *node)
 	if (fsstate == NULL)
 		return;
 
-	/* Close the cursor if open, to prevent accumulation of cursors */
-	if (fsstate->cursor_exists)
-		close_cursor(fsstate->conn, fsstate->cursor_number,
-					 fsstate->conn_state);
-
 	/* Release remote connection */
-	ReleaseConnection(fsstate->conn);
+	if (mapi_error(fsstate->conn))
+		die(fsstate->conn, fsstate->hdl);
+	if (mapi_close_handle(fsstate->hdl) != MOK)
+		die(fsstate->conn, fsstate->hdl);
+	mapi_destroy(fsstate->conn);
 	fsstate->conn = NULL;
 
 	/* MemoryContexts will be deleted automatically. */
@@ -1789,22 +1549,7 @@ MonetDB_AddForeignUpdateTargets(PlannerInfo *root,
 								RangeTblEntry *target_rte,
 								Relation target_relation)
 {
-	Var		   *var;
-
-	/*
-	 * In monetdb_fdw, what we need is the ctid, same as for a regular table.
-	 */
-
-	/* Make a Var representing the desired value */
-	var = makeVar(rtindex,
-				  SelfItemPointerAttributeNumber,
-				  TIDOID,
-				  -1,
-				  InvalidOid,
-				  0);
-
-	/* Register it as a row-identity column needed by this target rel */
-	add_row_identity_var(root, var, rtindex, "ctid");
+	elog(ERROR, "MonetDB_AddForeignUpdateTargets not supported yet");
 }
 
 /*
@@ -1817,133 +1562,7 @@ MonetDB_PlanForeignModify(PlannerInfo *root,
 						  Index resultRelation,
 						  int subplan_index)
 {
-	CmdType		operation = plan->operation;
-	RangeTblEntry *rte = planner_rt_fetch(resultRelation, root);
-	Relation	rel;
-	StringInfoData sql;
-	List	   *targetAttrs = NIL;
-	List	   *withCheckOptionList = NIL;
-	List	   *returningList = NIL;
-	List	   *retrieved_attrs = NIL;
-	bool		doNothing = false;
-	int			values_end_len = -1;
-
-	initStringInfo(&sql);
-
-	/*
-	 * Core code already has some lock on each rel being planned, so we can
-	 * use NoLock here.
-	 */
-	rel = table_open(rte->relid, NoLock);
-
-	/*
-	 * In an INSERT, we transmit all columns that are defined in the foreign
-	 * table.  In an UPDATE, if there are BEFORE ROW UPDATE triggers on the
-	 * foreign table, we transmit all columns like INSERT; else we transmit
-	 * only columns that were explicitly targets of the UPDATE, so as to avoid
-	 * unnecessary data transmission.  (We can't do that for INSERT since we
-	 * would miss sending default values for columns not listed in the source
-	 * statement, and for UPDATE if there are BEFORE ROW UPDATE triggers since
-	 * those triggers might change values for non-target columns, in which
-	 * case we would miss sending changed values for those columns.)
-	 */
-	if (operation == CMD_INSERT ||
-		(operation == CMD_UPDATE &&
-		 rel->trigdesc &&
-		 rel->trigdesc->trig_update_before_row))
-	{
-		TupleDesc	tupdesc = RelationGetDescr(rel);
-		int			attnum;
-
-		for (attnum = 1; attnum <= tupdesc->natts; attnum++)
-		{
-			Form_pg_attribute attr = TupleDescAttr(tupdesc, attnum - 1);
-
-			if (!attr->attisdropped)
-				targetAttrs = lappend_int(targetAttrs, attnum);
-		}
-	}
-	else if (operation == CMD_UPDATE)
-	{
-		int			col;
-		RelOptInfo *rel = find_base_rel(root, resultRelation);
-		Bitmapset  *allUpdatedCols = get_rel_all_updated_cols(root, rel);
-
-		col = -1;
-		while ((col = bms_next_member(allUpdatedCols, col)) >= 0)
-		{
-			/* bit numbers are offset by FirstLowInvalidHeapAttributeNumber */
-			AttrNumber	attno = col + FirstLowInvalidHeapAttributeNumber;
-
-			if (attno <= InvalidAttrNumber) /* shouldn't happen */
-				elog(ERROR, "system-column update is not supported");
-			targetAttrs = lappend_int(targetAttrs, attno);
-		}
-	}
-
-	/*
-	 * Extract the relevant WITH CHECK OPTION list if any.
-	 */
-	if (plan->withCheckOptionLists)
-		withCheckOptionList = (List *) list_nth(plan->withCheckOptionLists,
-												subplan_index);
-
-	/*
-	 * Extract the relevant RETURNING list if any.
-	 */
-	if (plan->returningLists)
-		returningList = (List *) list_nth(plan->returningLists, subplan_index);
-
-	/*
-	 * ON CONFLICT DO UPDATE and DO NOTHING case with inference specification
-	 * should have already been rejected in the optimizer, as presently there
-	 * is no way to recognize an arbiter index on a foreign table.  Only DO
-	 * NOTHING is supported without an inference specification.
-	 */
-	if (plan->onConflictAction == ONCONFLICT_NOTHING)
-		doNothing = true;
-	else if (plan->onConflictAction != ONCONFLICT_NONE)
-		elog(ERROR, "unexpected ON CONFLICT specification: %d",
-			 (int) plan->onConflictAction);
-
-	/*
-	 * Construct the SQL command string.
-	 */
-	switch (operation)
-	{
-		case CMD_INSERT:
-			deparseInsertSql(&sql, rte, resultRelation, rel,
-							 targetAttrs, doNothing,
-							 withCheckOptionList, returningList,
-							 &retrieved_attrs, &values_end_len);
-			break;
-		case CMD_UPDATE:
-			deparseUpdateSql(&sql, rte, resultRelation, rel,
-							 targetAttrs,
-							 withCheckOptionList, returningList,
-							 &retrieved_attrs);
-			break;
-		case CMD_DELETE:
-			deparseDeleteSql(&sql, rte, resultRelation, rel,
-							 returningList,
-							 &retrieved_attrs);
-			break;
-		default:
-			elog(ERROR, "unexpected operation: %d", (int) operation);
-			break;
-	}
-
-	table_close(rel, NoLock);
-
-	/*
-	 * Build the fdw_private list that will be available to the executor.
-	 * Items in the list must match enum FdwModifyPrivateIndex, above.
-	 */
-	return list_make5(makeString(sql.data),
-					  targetAttrs,
-					  makeInteger(values_end_len),
-					  makeBoolean((retrieved_attrs != NIL)),
-					  retrieved_attrs);
+	elog(ERROR, "MonetDB_PlanForeignModify not supported yet");
 }
 
 /*
@@ -1957,50 +1576,7 @@ MonetDB_BeginForeignModify(ModifyTableState *mtstate,
 						   int subplan_index,
 						   int eflags)
 {
-	PgFdwModifyState *fmstate;
-	char	   *query;
-	List	   *target_attrs;
-	bool		has_returning;
-	int			values_end_len;
-	List	   *retrieved_attrs;
-	RangeTblEntry *rte;
-
-	/*
-	 * Do nothing in EXPLAIN (no ANALYZE) case.  resultRelInfo->ri_FdwState
-	 * stays NULL.
-	 */
-	if (eflags & EXEC_FLAG_EXPLAIN_ONLY)
-		return;
-
-	/* Deconstruct fdw_private data. */
-	query = strVal(list_nth(fdw_private,
-							FdwModifyPrivateUpdateSql));
-	target_attrs = (List *) list_nth(fdw_private,
-									 FdwModifyPrivateTargetAttnums);
-	values_end_len = intVal(list_nth(fdw_private,
-									 FdwModifyPrivateLen));
-	has_returning = boolVal(list_nth(fdw_private,
-									 FdwModifyPrivateHasReturning));
-	retrieved_attrs = (List *) list_nth(fdw_private,
-										FdwModifyPrivateRetrievedAttrs);
-
-	/* Find RTE. */
-	rte = exec_rt_fetch(resultRelInfo->ri_RangeTableIndex,
-						mtstate->ps.state);
-
-	/* Construct an execution state. */
-	fmstate = create_foreign_modify(mtstate->ps.state,
-									rte,
-									resultRelInfo,
-									mtstate->operation,
-									outerPlanState(mtstate)->plan,
-									query,
-									target_attrs,
-									values_end_len,
-									has_returning,
-									retrieved_attrs);
-
-	resultRelInfo->ri_FdwState = fmstate;
+	elog(ERROR, "MonetDB_BeginForeignModify not supported yet");
 }
 
 /*
@@ -2013,23 +1589,7 @@ MonetDB_ExecForeignInsert(EState *estate,
 						  TupleTableSlot *slot,
 						  TupleTableSlot *planSlot)
 {
-	PgFdwModifyState *fmstate = (PgFdwModifyState *) resultRelInfo->ri_FdwState;
-	TupleTableSlot **rslot;
-	int			numSlots = 1;
-
-	/*
-	 * If the fmstate has aux_fmstate set, use the aux_fmstate (see
-	 * MonetDB_BeginForeignInsert())
-	 */
-	if (fmstate->aux_fmstate)
-		resultRelInfo->ri_FdwState = fmstate->aux_fmstate;
-	rslot = execute_foreign_modify(estate, resultRelInfo, CMD_INSERT,
-								   &slot, &planSlot, &numSlots);
-	/* Revert that change */
-	if (fmstate->aux_fmstate)
-		resultRelInfo->ri_FdwState = fmstate;
-
-	return rslot ? *rslot : NULL;
+	elog(ERROR, "MonetDB_ExecForeignInsert not supported yet");
 }
 
 /*
@@ -2043,22 +1603,7 @@ MonetDB_ExecForeignBatchInsert(EState *estate,
 							   TupleTableSlot **planSlots,
 							   int *numSlots)
 {
-	PgFdwModifyState *fmstate = (PgFdwModifyState *) resultRelInfo->ri_FdwState;
-	TupleTableSlot **rslot;
-
-	/*
-	 * If the fmstate has aux_fmstate set, use the aux_fmstate (see
-	 * MonetDB_BeginForeignInsert())
-	 */
-	if (fmstate->aux_fmstate)
-		resultRelInfo->ri_FdwState = fmstate->aux_fmstate;
-	rslot = execute_foreign_modify(estate, resultRelInfo, CMD_INSERT,
-								   slots, planSlots, numSlots);
-	/* Revert that change */
-	if (fmstate->aux_fmstate)
-		resultRelInfo->ri_FdwState = fmstate;
-
-	return rslot;
+	elog(ERROR, "MonetDB_ExecForeignBatchInsert not supported yet");
 }
 
 /*
@@ -2072,64 +1617,7 @@ MonetDB_ExecForeignBatchInsert(EState *estate,
 static int
 MonetDB_GetForeignModifyBatchSize(ResultRelInfo *resultRelInfo)
 {
-	int			batch_size;
-	PgFdwModifyState *fmstate = (PgFdwModifyState *) resultRelInfo->ri_FdwState;
-
-	/* should be called only once */
-	Assert(resultRelInfo->ri_BatchSize == 0);
-
-	/*
-	 * Should never get called when the insert is being performed on a table
-	 * that is also among the target relations of an UPDATE operation, because
-	 * MonetDB_BeginForeignInsert() currently rejects such insert attempts.
-	 */
-	Assert(fmstate == NULL || fmstate->aux_fmstate == NULL);
-
-	/*
-	 * In EXPLAIN without ANALYZE, ri_FdwState is NULL, so we have to lookup
-	 * the option directly in server/table options. Otherwise just use the
-	 * value we determined earlier.
-	 */
-	if (fmstate)
-		batch_size = fmstate->batch_size;
-	else
-		batch_size = get_batch_size_option(resultRelInfo->ri_RelationDesc);
-
-	/*
-	 * Disable batching when we have to use RETURNING, there are any
-	 * BEFORE/AFTER ROW INSERT triggers on the foreign table, or there are any
-	 * WITH CHECK OPTION constraints from parent views.
-	 *
-	 * When there are any BEFORE ROW INSERT triggers on the table, we can't
-	 * support it, because such triggers might query the table we're inserting
-	 * into and act differently if the tuples that have already been processed
-	 * and prepared for insertion are not there.
-	 */
-	if (resultRelInfo->ri_projectReturning != NULL ||
-		resultRelInfo->ri_WithCheckOptions != NIL ||
-		(resultRelInfo->ri_TrigDesc &&
-		 (resultRelInfo->ri_TrigDesc->trig_insert_before_row ||
-		  resultRelInfo->ri_TrigDesc->trig_insert_after_row)))
-		return 1;
-
-	/*
-	 * If the foreign table has no columns, disable batching as the INSERT
-	 * syntax doesn't allow batching multiple empty rows into a zero-column
-	 * table in a single statement.  This is needed for COPY FROM, in which
-	 * case fmstate must be non-NULL.
-	 */
-	if (fmstate && list_length(fmstate->target_attrs) == 0)
-		return 1;
-
-	/*
-	 * Otherwise use the batch size specified for server/table. The number of
-	 * parameters in a batch is limited to 65535 (uint16), so make sure we
-	 * don't exceed this limit by using the maximum batch_size possible.
-	 */
-	if (fmstate && fmstate->p_nums > 0)
-		batch_size = Min(batch_size, PQ_QUERY_PARAM_MAX_LIMIT / fmstate->p_nums);
-
-	return batch_size;
+	elog(ERROR, "MonetDB_GetForeignModifyBatchSize not supported yet");
 }
 
 /*
@@ -2142,13 +1630,7 @@ MonetDB_ExecForeignUpdate(EState *estate,
 						  TupleTableSlot *slot,
 						  TupleTableSlot *planSlot)
 {
-	TupleTableSlot **rslot;
-	int			numSlots = 1;
-
-	rslot = execute_foreign_modify(estate, resultRelInfo, CMD_UPDATE,
-								   &slot, &planSlot, &numSlots);
-
-	return rslot ? rslot[0] : NULL;
+	elog(ERROR, "MonetDB_ExecForeignUpdate not supported yet");
 }
 
 /*
@@ -2161,13 +1643,7 @@ MonetDB_ExecForeignDelete(EState *estate,
 						  TupleTableSlot *slot,
 						  TupleTableSlot *planSlot)
 {
-	TupleTableSlot **rslot;
-	int			numSlots = 1;
-
-	rslot = execute_foreign_modify(estate, resultRelInfo, CMD_DELETE,
-								   &slot, &planSlot, &numSlots);
-
-	return rslot ? rslot[0] : NULL;
+	elog(ERROR, "MonetDB_ExecForeignDelete not supported yet");
 }
 
 /*
@@ -2178,14 +1654,7 @@ static void
 MonetDB_EndForeignModify(EState *estate,
 						 ResultRelInfo *resultRelInfo)
 {
-	PgFdwModifyState *fmstate = (PgFdwModifyState *) resultRelInfo->ri_FdwState;
-
-	/* If fmstate is NULL, we are in EXPLAIN; nothing to do */
-	if (fmstate == NULL)
-		return;
-
-	/* Destroy the execution state */
-	finish_foreign_modify(fmstate);
+	elog(ERROR, "MonetDB_EndForeignModify not supported yet");
 }
 
 /*
@@ -2196,127 +1665,7 @@ static void
 MonetDB_BeginForeignInsert(ModifyTableState *mtstate,
 						   ResultRelInfo *resultRelInfo)
 {
-	PgFdwModifyState *fmstate;
-	ModifyTable *plan = castNode(ModifyTable, mtstate->ps.plan);
-	EState	   *estate = mtstate->ps.state;
-	Index		resultRelation;
-	Relation	rel = resultRelInfo->ri_RelationDesc;
-	RangeTblEntry *rte;
-	TupleDesc	tupdesc = RelationGetDescr(rel);
-	int			attnum;
-	int			values_end_len;
-	StringInfoData sql;
-	List	   *targetAttrs = NIL;
-	List	   *retrieved_attrs = NIL;
-	bool		doNothing = false;
-
-	/*
-	 * If the foreign table we are about to insert routed rows into is also an
-	 * UPDATE subplan result rel that will be updated later, proceeding with
-	 * the INSERT will result in the later UPDATE incorrectly modifying those
-	 * routed rows, so prevent the INSERT --- it would be nice if we could
-	 * handle this case; but for now, throw an error for safety.
-	 */
-	if (plan && plan->operation == CMD_UPDATE &&
-		(resultRelInfo->ri_usesFdwDirectModify ||
-		 resultRelInfo->ri_FdwState))
-		ereport(ERROR,
-				(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-				 errmsg("cannot route tuples into foreign table to be updated \"%s\"",
-						RelationGetRelationName(rel))));
-
-	initStringInfo(&sql);
-
-	/* We transmit all columns that are defined in the foreign table. */
-	for (attnum = 1; attnum <= tupdesc->natts; attnum++)
-	{
-		Form_pg_attribute attr = TupleDescAttr(tupdesc, attnum - 1);
-
-		if (!attr->attisdropped)
-			targetAttrs = lappend_int(targetAttrs, attnum);
-	}
-
-	/* Check if we add the ON CONFLICT clause to the remote query. */
-	if (plan)
-	{
-		OnConflictAction onConflictAction = plan->onConflictAction;
-
-		/* We only support DO NOTHING without an inference specification. */
-		if (onConflictAction == ONCONFLICT_NOTHING)
-			doNothing = true;
-		else if (onConflictAction != ONCONFLICT_NONE)
-			elog(ERROR, "unexpected ON CONFLICT specification: %d",
-				 (int) onConflictAction);
-	}
-
-	/*
-	 * If the foreign table is a partition that doesn't have a corresponding
-	 * RTE entry, we need to create a new RTE describing the foreign table for
-	 * use by deparseInsertSql and create_foreign_modify() below, after first
-	 * copying the parent's RTE and modifying some fields to describe the
-	 * foreign partition to work on. However, if this is invoked by UPDATE,
-	 * the existing RTE may already correspond to this partition if it is one
-	 * of the UPDATE subplan target rels; in that case, we can just use the
-	 * existing RTE as-is.
-	 */
-	if (resultRelInfo->ri_RangeTableIndex == 0)
-	{
-		ResultRelInfo *rootResultRelInfo = resultRelInfo->ri_RootResultRelInfo;
-
-		rte = exec_rt_fetch(rootResultRelInfo->ri_RangeTableIndex, estate);
-		rte = copyObject(rte);
-		rte->relid = RelationGetRelid(rel);
-		rte->relkind = RELKIND_FOREIGN_TABLE;
-
-		/*
-		 * For UPDATE, we must use the RT index of the first subplan target
-		 * rel's RTE, because the core code would have built expressions for
-		 * the partition, such as RETURNING, using that RT index as varno of
-		 * Vars contained in those expressions.
-		 */
-		if (plan && plan->operation == CMD_UPDATE &&
-			rootResultRelInfo->ri_RangeTableIndex == plan->rootRelation)
-			resultRelation = mtstate->resultRelInfo[0].ri_RangeTableIndex;
-		else
-			resultRelation = rootResultRelInfo->ri_RangeTableIndex;
-	}
-	else
-	{
-		resultRelation = resultRelInfo->ri_RangeTableIndex;
-		rte = exec_rt_fetch(resultRelation, estate);
-	}
-
-	/* Construct the SQL command string. */
-	deparseInsertSql(&sql, rte, resultRelation, rel, targetAttrs, doNothing,
-					 resultRelInfo->ri_WithCheckOptions,
-					 resultRelInfo->ri_returningList,
-					 &retrieved_attrs, &values_end_len);
-
-	/* Construct an execution state. */
-	fmstate = create_foreign_modify(mtstate->ps.state,
-									rte,
-									resultRelInfo,
-									CMD_INSERT,
-									NULL,
-									sql.data,
-									targetAttrs,
-									values_end_len,
-									retrieved_attrs != NIL,
-									retrieved_attrs);
-
-	/*
-	 * If the given resultRelInfo already has PgFdwModifyState set, it means
-	 * the foreign table is an UPDATE subplan result rel; in which case, store
-	 * the resulting state into the aux_fmstate of the PgFdwModifyState.
-	 */
-	if (resultRelInfo->ri_FdwState)
-	{
-		Assert(plan && plan->operation == CMD_UPDATE);
-		Assert(resultRelInfo->ri_usesFdwDirectModify == false);
-		((PgFdwModifyState *) resultRelInfo->ri_FdwState)->aux_fmstate = fmstate;
-	}
-	else
-		resultRelInfo->ri_FdwState = fmstate;
+	elog(ERROR, "MonetDB_BeginForeignInsert not supported yet");
 }
 
 /*
@@ -2327,19 +1676,7 @@ static void
 MonetDB_EndForeignInsert(EState *estate,
 						 ResultRelInfo *resultRelInfo)
 {
-	PgFdwModifyState *fmstate = (PgFdwModifyState *) resultRelInfo->ri_FdwState;
-
-	Assert(fmstate != NULL);
-
-	/*
-	 * If the fmstate has aux_fmstate set, get the aux_fmstate (see
-	 * MonetDB_BeginForeignInsert())
-	 */
-	if (fmstate->aux_fmstate)
-		fmstate = fmstate->aux_fmstate;
-
-	/* Destroy the execution state */
-	finish_foreign_modify(fmstate);
+	elog(ERROR, "MonetDB_EndForeignInsert not supported yet");
 }
 
 /*
@@ -2350,41 +1687,7 @@ MonetDB_EndForeignInsert(EState *estate,
 static int
 MonetDB_IsForeignRelUpdatable(Relation rel)
 {
-	bool		updatable;
-	ForeignTable *table;
-	ForeignServer *server;
-	ListCell   *lc;
-
-	/*
-	 * By default, all monetdb_fdw foreign tables are assumed updatable. This
-	 * can be overridden by a per-server setting, which in turn can be
-	 * overridden by a per-table setting.
-	 */
-	updatable = true;
-
-	table = GetForeignTable(RelationGetRelid(rel));
-	server = GetForeignServer(table->serverid);
-
-	foreach(lc, server->options)
-	{
-		DefElem    *def = (DefElem *) lfirst(lc);
-
-		if (strcmp(def->defname, "updatable") == 0)
-			updatable = defGetBoolean(def);
-	}
-	foreach(lc, table->options)
-	{
-		DefElem    *def = (DefElem *) lfirst(lc);
-
-		if (strcmp(def->defname, "updatable") == 0)
-			updatable = defGetBoolean(def);
-	}
-
-	/*
-	 * Currently "updatable" means support for INSERT, UPDATE and DELETE.
-	 */
-	return updatable ?
-		(1 << CMD_INSERT) | (1 << CMD_UPDATE) | (1 << CMD_DELETE) : 0;
+	elog(ERROR, "MonetDB_IsForeignRelUpdatable not supported yet");
 }
 
 /*
@@ -2394,86 +1697,7 @@ MonetDB_IsForeignRelUpdatable(Relation rel)
 static bool
 MonetDB_RecheckForeignScan(ForeignScanState *node, TupleTableSlot *slot)
 {
-	Index		scanrelid = ((Scan *) node->ss.ps.plan)->scanrelid;
-	PlanState  *outerPlan = outerPlanState(node);
-	TupleTableSlot *result;
-
-	/* For base foreign relations, it suffices to set fdw_recheck_quals */
-	if (scanrelid > 0)
-		return true;
-
-	Assert(outerPlan != NULL);
-
-	/* Execute a local join execution plan */
-	result = ExecProcNode(outerPlan);
-	if (TupIsNull(result))
-		return false;
-
-	/* Store result in the given slot */
-	ExecCopySlot(slot, result);
-
-	return true;
-}
-
-/*
- * find_modifytable_subplan
- *		Helper routine for MonetDB_PlanDirectModify to find the
- *		ModifyTable subplan node that scans the specified RTI.
- *
- * Returns NULL if the subplan couldn't be identified.  That's not a fatal
- * error condition, we just abandon trying to do the update directly.
- */
-static ForeignScan *
-find_modifytable_subplan(PlannerInfo *root,
-						 ModifyTable *plan,
-						 Index rtindex,
-						 int subplan_index)
-{
-	Plan	   *subplan = outerPlan(plan);
-
-	/*
-	 * The cases we support are (1) the desired ForeignScan is the immediate
-	 * child of ModifyTable, or (2) it is the subplan_index'th child of an
-	 * Append node that is the immediate child of ModifyTable.  There is no
-	 * point in looking further down, as that would mean that local joins are
-	 * involved, so we can't do the update directly.
-	 *
-	 * There could be a Result atop the Append too, acting to compute the
-	 * UPDATE targetlist values.  We ignore that here; the tlist will be
-	 * checked by our caller.
-	 *
-	 * In principle we could examine all the children of the Append, but it's
-	 * currently unlikely that the core planner would generate such a plan
-	 * with the children out-of-order.  Moreover, such a search risks costing
-	 * O(N^2) time when there are a lot of children.
-	 */
-	if (IsA(subplan, Append))
-	{
-		Append	   *appendplan = (Append *) subplan;
-
-		if (subplan_index < list_length(appendplan->appendplans))
-			subplan = (Plan *) list_nth(appendplan->appendplans, subplan_index);
-	}
-	else if (IsA(subplan, Result) &&
-			 outerPlan(subplan) != NULL &&
-			 IsA(outerPlan(subplan), Append))
-	{
-		Append	   *appendplan = (Append *) outerPlan(subplan);
-
-		if (subplan_index < list_length(appendplan->appendplans))
-			subplan = (Plan *) list_nth(appendplan->appendplans, subplan_index);
-	}
-
-	/* Now, have we got a ForeignScan on the desired rel? */
-	if (IsA(subplan, ForeignScan))
-	{
-		ForeignScan *fscan = (ForeignScan *) subplan;
-
-		if (bms_is_member(rtindex, fscan->fs_base_relids))
-			return fscan;
-	}
-
-	return NULL;
+	elog(ERROR, "MonetDB_RecheckForeignScan not supported yet");
 }
 
 /*
@@ -2489,192 +1713,7 @@ MonetDB_PlanDirectModify(PlannerInfo *root,
 						 Index resultRelation,
 						 int subplan_index)
 {
-	CmdType		operation = plan->operation;
-	RelOptInfo *foreignrel;
-	RangeTblEntry *rte;
-	PgFdwRelationInfo *fpinfo;
-	Relation	rel;
-	StringInfoData sql;
-	ForeignScan *fscan;
-	List	   *processed_tlist = NIL;
-	List	   *targetAttrs = NIL;
-	List	   *remote_exprs;
-	List	   *params_list = NIL;
-	List	   *returningList = NIL;
-	List	   *retrieved_attrs = NIL;
-
-	/*
-	 * Decide whether it is safe to modify a foreign table directly.
-	 */
-
-	/*
-	 * The table modification must be an UPDATE or DELETE.
-	 */
-	if (operation != CMD_UPDATE && operation != CMD_DELETE)
-		return false;
-
-	/*
-	 * Try to locate the ForeignScan subplan that's scanning resultRelation.
-	 */
-	fscan = find_modifytable_subplan(root, plan, resultRelation, subplan_index);
-	if (!fscan)
-		return false;
-
-	/*
-	 * It's unsafe to modify a foreign table directly if there are any quals
-	 * that should be evaluated locally.
-	 */
-	if (fscan->scan.plan.qual != NIL)
-		return false;
-
-	/* Safe to fetch data about the target foreign rel */
-	if (fscan->scan.scanrelid == 0)
-	{
-		foreignrel = find_join_rel(root, fscan->fs_relids);
-		/* We should have a rel for this foreign join. */
-		Assert(foreignrel);
-	}
-	else
-		foreignrel = root->simple_rel_array[resultRelation];
-	rte = root->simple_rte_array[resultRelation];
-	fpinfo = (PgFdwRelationInfo *) foreignrel->fdw_private;
-
-	/*
-	 * It's unsafe to update a foreign table directly, if any expressions to
-	 * assign to the target columns are unsafe to evaluate remotely.
-	 */
-	if (operation == CMD_UPDATE)
-	{
-		ListCell   *lc,
-				   *lc2;
-
-		/*
-		 * The expressions of concern are the first N columns of the processed
-		 * targetlist, where N is the length of the rel's update_colnos.
-		 */
-		get_translated_update_targetlist(root, resultRelation,
-										 &processed_tlist, &targetAttrs);
-		forboth(lc, processed_tlist, lc2, targetAttrs)
-		{
-			TargetEntry *tle = lfirst_node(TargetEntry, lc);
-			AttrNumber	attno = lfirst_int(lc2);
-
-			/* update's new-value expressions shouldn't be resjunk */
-			Assert(!tle->resjunk);
-
-			if (attno <= InvalidAttrNumber) /* shouldn't happen */
-				elog(ERROR, "system-column update is not supported");
-
-			if (!is_foreign_expr(root, foreignrel, (Expr *) tle->expr))
-				return false;
-		}
-	}
-
-	/*
-	 * Ok, rewrite subplan so as to modify the foreign table directly.
-	 */
-	initStringInfo(&sql);
-
-	/*
-	 * Core code already has some lock on each rel being planned, so we can
-	 * use NoLock here.
-	 */
-	rel = table_open(rte->relid, NoLock);
-
-	/*
-	 * Recall the qual clauses that must be evaluated remotely.  (These are
-	 * bare clauses not RestrictInfos, but deparse.c's appendConditions()
-	 * doesn't care.)
-	 */
-	remote_exprs = fpinfo->final_remote_exprs;
-
-	/*
-	 * Extract the relevant RETURNING list if any.
-	 */
-	if (plan->returningLists)
-	{
-		returningList = (List *) list_nth(plan->returningLists, subplan_index);
-
-		/*
-		 * When performing an UPDATE/DELETE .. RETURNING on a join directly,
-		 * we fetch from the foreign server any Vars specified in RETURNING
-		 * that refer not only to the target relation but to non-target
-		 * relations.  So we'll deparse them into the RETURNING clause of the
-		 * remote query; use a targetlist consisting of them instead, which
-		 * will be adjusted to be new fdw_scan_tlist of the foreign-scan plan
-		 * node below.
-		 */
-		if (fscan->scan.scanrelid == 0)
-			returningList = build_remote_returning(resultRelation, rel,
-												   returningList);
-	}
-
-	/*
-	 * Construct the SQL command string.
-	 */
-	switch (operation)
-	{
-		case CMD_UPDATE:
-			deparseDirectUpdateSql(&sql, root, resultRelation, rel,
-								   foreignrel,
-								   processed_tlist,
-								   targetAttrs,
-								   remote_exprs, &params_list,
-								   returningList, &retrieved_attrs);
-			break;
-		case CMD_DELETE:
-			deparseDirectDeleteSql(&sql, root, resultRelation, rel,
-								   foreignrel,
-								   remote_exprs, &params_list,
-								   returningList, &retrieved_attrs);
-			break;
-		default:
-			elog(ERROR, "unexpected operation: %d", (int) operation);
-			break;
-	}
-
-	/*
-	 * Update the operation and target relation info.
-	 */
-	fscan->operation = operation;
-	fscan->resultRelation = resultRelation;
-
-	/*
-	 * Update the fdw_exprs list that will be available to the executor.
-	 */
-	fscan->fdw_exprs = params_list;
-
-	/*
-	 * Update the fdw_private list that will be available to the executor.
-	 * Items in the list must match enum FdwDirectModifyPrivateIndex, above.
-	 */
-	fscan->fdw_private = list_make4(makeString(sql.data),
-									makeBoolean((retrieved_attrs != NIL)),
-									retrieved_attrs,
-									makeBoolean(plan->canSetTag));
-
-	/*
-	 * Update the foreign-join-related fields.
-	 */
-	if (fscan->scan.scanrelid == 0)
-	{
-		/* No need for the outer subplan. */
-		fscan->scan.plan.lefttree = NULL;
-
-		/* Build new fdw_scan_tlist if UPDATE/DELETE .. RETURNING. */
-		if (returningList)
-			rebuild_fdw_scan_tlist(fscan, returningList);
-	}
-
-	/*
-	 * Finally, unset the async-capable flag if it is set, as we currently
-	 * don't support asynchronous execution of direct modifications.
-	 */
-	if (fscan->scan.plan.async_capable)
-		fscan->scan.plan.async_capable = false;
-
-	table_close(rel, NoLock);
-	return true;
+	elog(ERROR, "MonetDB_PlanDirectModify not supported yet");
 }
 
 /*
@@ -2684,114 +1723,7 @@ MonetDB_PlanDirectModify(PlannerInfo *root,
 static void
 MonetDB_BeginDirectModify(ForeignScanState *node, int eflags)
 {
-	ForeignScan *fsplan = (ForeignScan *) node->ss.ps.plan;
-	EState	   *estate = node->ss.ps.state;
-	PgFdwDirectModifyState *dmstate;
-	Index		rtindex;
-	Oid			userid;
-	ForeignTable *table;
-	UserMapping *user;
-	int			numParams;
-
-	/*
-	 * Do nothing in EXPLAIN (no ANALYZE) case.  node->fdw_state stays NULL.
-	 */
-	if (eflags & EXEC_FLAG_EXPLAIN_ONLY)
-		return;
-
-	/*
-	 * We'll save private state in node->fdw_state.
-	 */
-	dmstate = (PgFdwDirectModifyState *) palloc0(sizeof(PgFdwDirectModifyState));
-	node->fdw_state = (void *) dmstate;
-
-	/*
-	 * Identify which user to do the remote access as.  This should match what
-	 * ExecCheckPermissions() does.
-	 */
-	userid = OidIsValid(fsplan->checkAsUser) ? fsplan->checkAsUser : GetUserId();
-
-	/* Get info about foreign table. */
-	rtindex = node->resultRelInfo->ri_RangeTableIndex;
-	if (fsplan->scan.scanrelid == 0)
-		dmstate->rel = ExecOpenScanRelation(estate, rtindex, eflags);
-	else
-		dmstate->rel = node->ss.ss_currentRelation;
-	table = GetForeignTable(RelationGetRelid(dmstate->rel));
-	user = GetUserMapping(userid, table->serverid);
-
-	/*
-	 * Get connection to the foreign server.  Connection manager will
-	 * establish new connection if necessary.
-	 */
-	dmstate->conn = GetConnection(user, false, &dmstate->conn_state);
-
-	/* Update the foreign-join-related fields. */
-	if (fsplan->scan.scanrelid == 0)
-	{
-		/* Save info about foreign table. */
-		dmstate->resultRel = dmstate->rel;
-
-		/*
-		 * Set dmstate->rel to NULL to teach get_returning_data() and
-		 * make_tuple_from_result_row() that columns fetched from the remote
-		 * server are described by fdw_scan_tlist of the foreign-scan plan
-		 * node, not the tuple descriptor for the target relation.
-		 */
-		dmstate->rel = NULL;
-	}
-
-	/* Initialize state variable */
-	dmstate->num_tuples = -1;	/* -1 means not set yet */
-
-	/* Get private info created by planner functions. */
-	dmstate->query = strVal(list_nth(fsplan->fdw_private,
-									 FdwDirectModifyPrivateUpdateSql));
-	dmstate->has_returning = boolVal(list_nth(fsplan->fdw_private,
-											  FdwDirectModifyPrivateHasReturning));
-	dmstate->retrieved_attrs = (List *) list_nth(fsplan->fdw_private,
-												 FdwDirectModifyPrivateRetrievedAttrs);
-	dmstate->set_processed = boolVal(list_nth(fsplan->fdw_private,
-											  FdwDirectModifyPrivateSetProcessed));
-
-	/* Create context for per-tuple temp workspace. */
-	dmstate->temp_cxt = AllocSetContextCreate(estate->es_query_cxt,
-											  "monetdb_fdw temporary data",
-											  ALLOCSET_SMALL_SIZES);
-
-	/* Prepare for input conversion of RETURNING results. */
-	if (dmstate->has_returning)
-	{
-		TupleDesc	tupdesc;
-
-		if (fsplan->scan.scanrelid == 0)
-			tupdesc = get_tupdesc_for_join_scan_tuples(node);
-		else
-			tupdesc = RelationGetDescr(dmstate->rel);
-
-		dmstate->attinmeta = TupleDescGetAttInMetadata(tupdesc);
-
-		/*
-		 * When performing an UPDATE/DELETE .. RETURNING on a join directly,
-		 * initialize a filter to extract an updated/deleted tuple from a scan
-		 * tuple.
-		 */
-		if (fsplan->scan.scanrelid == 0)
-			init_returning_filter(dmstate, fsplan->fdw_scan_tlist, rtindex);
-	}
-
-	/*
-	 * Prepare for processing of parameters used in remote query, if any.
-	 */
-	numParams = list_length(fsplan->fdw_exprs);
-	dmstate->numParams = numParams;
-	if (numParams > 0)
-		prepare_query_params((PlanState *) node,
-							 fsplan->fdw_exprs,
-							 numParams,
-							 &dmstate->param_flinfo,
-							 &dmstate->param_exprs,
-							 &dmstate->param_values);
+	elog(ERROR, "MonetDB_BeginDirectModify not supported yet");
 }
 
 /*
@@ -2801,41 +1733,7 @@ MonetDB_BeginDirectModify(ForeignScanState *node, int eflags)
 static TupleTableSlot *
 MonetDB_IterateDirectModify(ForeignScanState *node)
 {
-	PgFdwDirectModifyState *dmstate = (PgFdwDirectModifyState *) node->fdw_state;
-	EState	   *estate = node->ss.ps.state;
-	ResultRelInfo *resultRelInfo = node->resultRelInfo;
-
-	/*
-	 * If this is the first call after Begin, execute the statement.
-	 */
-	if (dmstate->num_tuples == -1)
-		execute_dml_stmt(node);
-
-	/*
-	 * If the local query doesn't specify RETURNING, just clear tuple slot.
-	 */
-	if (!resultRelInfo->ri_projectReturning)
-	{
-		TupleTableSlot *slot = node->ss.ss_ScanTupleSlot;
-		Instrumentation *instr = node->ss.ps.instrument;
-
-		Assert(!dmstate->has_returning);
-
-		/* Increment the command es_processed count if necessary. */
-		if (dmstate->set_processed)
-			estate->es_processed += dmstate->num_tuples;
-
-		/* Increment the tuple count for EXPLAIN ANALYZE if necessary. */
-		if (instr)
-			instr->tuplecount += dmstate->num_tuples;
-
-		return ExecClearTuple(slot);
-	}
-
-	/*
-	 * Get the next RETURNING tuple.
-	 */
-	return get_returning_data(node);
+	elog(ERROR, "MonetDB_IterateDirectModify not supported yet");
 }
 
 /*
@@ -2845,20 +1743,7 @@ MonetDB_IterateDirectModify(ForeignScanState *node)
 static void
 MonetDB_EndDirectModify(ForeignScanState *node)
 {
-	PgFdwDirectModifyState *dmstate = (PgFdwDirectModifyState *) node->fdw_state;
-
-	/* if dmstate is NULL, we are in EXPLAIN; nothing to do */
-	if (dmstate == NULL)
-		return;
-
-	/* Release PGresult */
-	PQclear(dmstate->result);
-
-	/* Release remote connection */
-	ReleaseConnection(dmstate->conn);
-	dmstate->conn = NULL;
-
-	/* MemoryContext will be deleted automatically. */
+	elog(ERROR, "MonetDB_EndDirectModify not supported yet");
 }
 
 /*
@@ -2868,104 +1753,7 @@ MonetDB_EndDirectModify(ForeignScanState *node)
 static void
 MonetDB_ExplainForeignScan(ForeignScanState *node, ExplainState *es)
 {
-	ForeignScan *plan = castNode(ForeignScan, node->ss.ps.plan);
-	List	   *fdw_private = plan->fdw_private;
-
-	/*
-	 * Identify foreign scans that are really joins or upper relations.  The
-	 * input looks something like "(1) LEFT JOIN (2)", and we must replace the
-	 * digit string(s), which are RT indexes, with the correct relation names.
-	 * We do that here, not when the plan is created, because we can't know
-	 * what aliases ruleutils.c will assign at plan creation time.
-	 */
-	if (list_length(fdw_private) > FdwScanPrivateRelations)
-	{
-		StringInfo	relations;
-		char	   *rawrelations;
-		char	   *ptr;
-		int			minrti,
-					rtoffset;
-
-		rawrelations = strVal(list_nth(fdw_private, FdwScanPrivateRelations));
-
-		/*
-		 * A difficulty with using a string representation of RT indexes is
-		 * that setrefs.c won't update the string when flattening the
-		 * rangetable.  To find out what rtoffset was applied, identify the
-		 * minimum RT index appearing in the string and compare it to the
-		 * minimum member of plan->fs_base_relids.  (We expect all the relids
-		 * in the join will have been offset by the same amount; the Asserts
-		 * below should catch it if that ever changes.)
-		 */
-		minrti = INT_MAX;
-		ptr = rawrelations;
-		while (*ptr)
-		{
-			if (isdigit((unsigned char) *ptr))
-			{
-				int			rti = strtol(ptr, &ptr, 10);
-
-				if (rti < minrti)
-					minrti = rti;
-			}
-			else
-				ptr++;
-		}
-		rtoffset = bms_next_member(plan->fs_base_relids, -1) - minrti;
-
-		/* Now we can translate the string */
-		relations = makeStringInfo();
-		ptr = rawrelations;
-		while (*ptr)
-		{
-			if (isdigit((unsigned char) *ptr))
-			{
-				int			rti = strtol(ptr, &ptr, 10);
-				RangeTblEntry *rte;
-				char	   *relname;
-				char	   *refname;
-
-				rti += rtoffset;
-				Assert(bms_is_member(rti, plan->fs_base_relids));
-				rte = rt_fetch(rti, es->rtable);
-				Assert(rte->rtekind == RTE_RELATION);
-				/* This logic should agree with explain.c's ExplainTargetRel */
-				relname = get_rel_name(rte->relid);
-				if (es->verbose)
-				{
-					char	   *namespace;
-
-					namespace = get_namespace_name_or_temp(get_rel_namespace(rte->relid));
-					appendStringInfo(relations, "%s.%s",
-									 quote_identifier(namespace),
-									 quote_identifier(relname));
-				}
-				else
-					appendStringInfoString(relations,
-										   quote_identifier(relname));
-				refname = (char *) list_nth(es->rtable_names, rti - 1);
-				if (refname == NULL)
-					refname = rte->eref->aliasname;
-				if (strcmp(refname, relname) != 0)
-					appendStringInfo(relations, " %s",
-									 quote_identifier(refname));
-			}
-			else
-				appendStringInfoChar(relations, *ptr++);
-		}
-		ExplainPropertyText("Relations", relations->data, es);
-	}
-
-	/*
-	 * Add remote query, when VERBOSE option is specified.
-	 */
-	if (es->verbose)
-	{
-		char	   *sql;
-
-		sql = strVal(list_nth(fdw_private, FdwScanPrivateSelectSql));
-		ExplainPropertyText("Remote SQL", sql, es);
-	}
+	elog(ERROR, "MonetDB_ExplainForeignScan not supported yet");
 }
 
 /*
@@ -2979,20 +1767,7 @@ MonetDB_ExplainForeignModify(ModifyTableState *mtstate,
 							 int subplan_index,
 							 ExplainState *es)
 {
-	if (es->verbose)
-	{
-		char	   *sql = strVal(list_nth(fdw_private,
-										  FdwModifyPrivateUpdateSql));
-
-		ExplainPropertyText("Remote SQL", sql, es);
-
-		/*
-		 * For INSERT we should always have batch size >= 1, but UPDATE and
-		 * DELETE don't support batching so don't show the property.
-		 */
-		if (rinfo->ri_BatchSize > 0)
-			ExplainPropertyInteger("Batch Size", NULL, rinfo->ri_BatchSize, es);
-	}
+	elog(ERROR, "MonetDB_ExplainForeignModify not supported yet");
 }
 
 /*
@@ -3003,15 +1778,7 @@ MonetDB_ExplainForeignModify(ModifyTableState *mtstate,
 static void
 MonetDB_ExplainDirectModify(ForeignScanState *node, ExplainState *es)
 {
-	List	   *fdw_private;
-	char	   *sql;
-
-	if (es->verbose)
-	{
-		fdw_private = ((ForeignScan *) node->ss.ps.plan)->fdw_private;
-		sql = strVal(list_nth(fdw_private, FdwDirectModifyPrivateUpdateSql));
-		ExplainPropertyText("Remote SQL", sql, es);
-	}
+	elog(ERROR, "MonetDB_ExplainDirectModify not supported yet");
 }
 
 /*
@@ -3023,91 +1790,7 @@ MonetDB_ExecForeignTruncate(List *rels,
 							DropBehavior behavior,
 							bool restart_seqs)
 {
-	Oid			serverid = InvalidOid;
-	UserMapping *user = NULL;
-	PGconn	   *conn = NULL;
-	StringInfoData sql;
-	ListCell   *lc;
-	bool		server_truncatable = true;
-
-	/*
-	 * By default, all monetdb_fdw foreign tables are assumed truncatable.
-	 * This can be overridden by a per-server setting, which in turn can be
-	 * overridden by a per-table setting.
-	 */
-	foreach(lc, rels)
-	{
-		ForeignServer *server = NULL;
-		Relation	rel = lfirst(lc);
-		ForeignTable *table = GetForeignTable(RelationGetRelid(rel));
-		ListCell   *cell;
-		bool		truncatable;
-
-		/*
-		 * First time through, determine whether the foreign server allows
-		 * truncates. Since all specified foreign tables are assumed to belong
-		 * to the same foreign server, this result can be used for other
-		 * foreign tables.
-		 */
-		if (!OidIsValid(serverid))
-		{
-			serverid = table->serverid;
-			server = GetForeignServer(serverid);
-
-			foreach(cell, server->options)
-			{
-				DefElem    *defel = (DefElem *) lfirst(cell);
-
-				if (strcmp(defel->defname, "truncatable") == 0)
-				{
-					server_truncatable = defGetBoolean(defel);
-					break;
-				}
-			}
-		}
-
-		/*
-		 * Confirm that all specified foreign tables belong to the same
-		 * foreign server.
-		 */
-		Assert(table->serverid == serverid);
-
-		/* Determine whether this foreign table allows truncations */
-		truncatable = server_truncatable;
-		foreach(cell, table->options)
-		{
-			DefElem    *defel = (DefElem *) lfirst(cell);
-
-			if (strcmp(defel->defname, "truncatable") == 0)
-			{
-				truncatable = defGetBoolean(defel);
-				break;
-			}
-		}
-
-		if (!truncatable)
-			ereport(ERROR,
-					(errcode(ERRCODE_OBJECT_NOT_IN_PREREQUISITE_STATE),
-					 errmsg("foreign table \"%s\" does not allow truncates",
-							RelationGetRelationName(rel))));
-	}
-	Assert(OidIsValid(serverid));
-
-	/*
-	 * Get connection to the foreign server.  Connection manager will
-	 * establish new connection if necessary.
-	 */
-	user = GetUserMapping(GetUserId(), serverid);
-	conn = GetConnection(user, false, NULL);
-
-	/* Construct the TRUNCATE command string */
-	initStringInfo(&sql);
-	deparseTruncateSql(&sql, rels, behavior, restart_seqs);
-
-	/* Issue the TRUNCATE command to remote server */
-	do_sql_command(conn, sql.data);
-
-	pfree(sql.data);
+	elog(ERROR, "MonetDB_ExecForeignTruncate not supported yet");
 }
 
 /*
@@ -3129,11 +1812,11 @@ estimate_path_cost_size(PlannerInfo *root,
 						RelOptInfo *foreignrel,
 						List *param_join_conds,
 						List *pathkeys,
-						PgFdwPathExtraData *fpextra,
+						MonetdbFdwPathExtraData *fpextra,
 						double *p_rows, int *p_width,
 						Cost *p_startup_cost, Cost *p_total_cost)
 {
-	PgFdwRelationInfo *fpinfo = (PgFdwRelationInfo *) foreignrel->fdw_private;
+	MonetdbFdwRelationInfo *fpinfo = (MonetdbFdwRelationInfo *) foreignrel->fdw_private;
 	double		rows;
 	double		retrieved_rows;
 	int			width;
@@ -3155,7 +1838,6 @@ estimate_path_cost_size(PlannerInfo *root,
 		List	   *remote_param_join_conds;
 		List	   *local_param_join_conds;
 		StringInfoData sql;
-		PGconn	   *conn;
 		Selectivity local_sel;
 		QualCost	local_cost;
 		List	   *fdw_scan_tlist = NIL;
@@ -3197,12 +1879,6 @@ estimate_path_cost_size(PlannerInfo *root,
 								fpextra ? fpextra->has_final_sort : false,
 								fpextra ? fpextra->has_limit : false,
 								false, &retrieved_attrs, NULL);
-
-		/* Get the remote estimate */
-		conn = GetConnection(fpinfo->user, false, NULL);
-		get_remote_estimate(sql.data, conn, &rows, &width,
-							&startup_cost, &total_cost);
-		ReleaseConnection(conn);
 
 		retrieved_rows = rows;
 
@@ -3288,8 +1964,8 @@ estimate_path_cost_size(PlannerInfo *root,
 		}
 		else if (IS_JOIN_REL(foreignrel))
 		{
-			PgFdwRelationInfo *fpinfo_i;
-			PgFdwRelationInfo *fpinfo_o;
+			MonetdbFdwRelationInfo *fpinfo_i;
+			MonetdbFdwRelationInfo *fpinfo_o;
 			QualCost	join_cost;
 			QualCost	remote_conds_cost;
 			double		nrows;
@@ -3301,8 +1977,8 @@ estimate_path_cost_size(PlannerInfo *root,
 			/* For join we expect inner and outer relations set */
 			Assert(fpinfo->innerrel && fpinfo->outerrel);
 
-			fpinfo_i = (PgFdwRelationInfo *) fpinfo->innerrel->fdw_private;
-			fpinfo_o = (PgFdwRelationInfo *) fpinfo->outerrel->fdw_private;
+			fpinfo_i = (MonetdbFdwRelationInfo *) fpinfo->innerrel->fdw_private;
+			fpinfo_o = (MonetdbFdwRelationInfo *) fpinfo->outerrel->fdw_private;
 
 			/* Estimate of number of rows in cross product */
 			nrows = fpinfo_i->rows * fpinfo_o->rows;
@@ -3368,7 +2044,7 @@ estimate_path_cost_size(PlannerInfo *root,
 		else if (IS_UPPER_REL(foreignrel))
 		{
 			RelOptInfo *outerrel = fpinfo->outerrel;
-			PgFdwRelationInfo *ofpinfo;
+			MonetdbFdwRelationInfo *ofpinfo;
 			AggClauseCosts aggcosts;
 			double		input_rows;
 			int			numGroupCols;
@@ -3387,7 +2063,7 @@ estimate_path_cost_size(PlannerInfo *root,
 			 * and all finalization and run cost are added in total_cost.
 			 */
 
-			ofpinfo = (PgFdwRelationInfo *) outerrel->fdw_private;
+			ofpinfo = (MonetdbFdwRelationInfo *) outerrel->fdw_private;
 
 			/* Get rows from input rel */
 			input_rows = ofpinfo->rows;
@@ -3625,52 +2301,6 @@ estimate_path_cost_size(PlannerInfo *root,
 }
 
 /*
- * Estimate costs of executing a SQL statement remotely.
- * The given "sql" must be an EXPLAIN command.
- */
-static void
-get_remote_estimate(const char *sql, PGconn *conn,
-					double *rows, int *width,
-					Cost *startup_cost, Cost *total_cost)
-{
-	PGresult   *volatile res = NULL;
-
-	/* PGresult must be released before leaving this function. */
-	PG_TRY();
-	{
-		char	   *line;
-		char	   *p;
-		int			n;
-
-		/*
-		 * Execute EXPLAIN remotely.
-		 */
-		res = pgfdw_exec_query(conn, sql, NULL);
-		if (PQresultStatus(res) != PGRES_TUPLES_OK)
-			pgfdw_report_error(ERROR, res, conn, false, sql);
-
-		/*
-		 * Extract cost numbers for topmost plan node.  Note we search for a
-		 * left paren from the end of the line to avoid being confused by
-		 * other uses of parentheses.
-		 */
-		line = PQgetvalue(res, 0, 0);
-		p = strrchr(line, '(');
-		if (p == NULL)
-			elog(ERROR, "could not interpret EXPLAIN output: \"%s\"", line);
-		n = sscanf(p, "(cost=%lf..%lf rows=%lf width=%d)",
-				   startup_cost, total_cost, rows, width);
-		if (n != 4)
-			elog(ERROR, "could not interpret EXPLAIN output: \"%s\"", line);
-	}
-	PG_FINALLY();
-	{
-		PQclear(res);
-	}
-	PG_END_TRY();
-}
-
-/*
  * Adjust the cost estimates of a foreign grouping path to include the cost of
  * generating properly-sorted output.
  */
@@ -3755,89 +2385,12 @@ ec_member_matches_foreign(PlannerInfo *root, RelOptInfo *rel,
 }
 
 /*
- * Create cursor for node's query with current parameter values.
- */
-static void
-create_cursor(ForeignScanState *node)
-{
-	MonetdbFdwScanState *fsstate = (MonetdbFdwScanState *) node->fdw_state;
-	ExprContext *econtext = node->ss.ps.ps_ExprContext;
-	int			numParams = fsstate->numParams;
-	const char **values = fsstate->param_values;
-	PGconn	   *conn = fsstate->conn;
-	StringInfoData buf;
-	PGresult   *res;
-
-	/* First, process a pending asynchronous request, if any. */
-	if (fsstate->conn_state->pendingAreq)
-		process_pending_request(fsstate->conn_state->pendingAreq);
-
-	/*
-	 * Construct array of query parameter values in text format.  We do the
-	 * conversions in the short-lived per-tuple context, so as not to cause a
-	 * memory leak over repeated scans.
-	 */
-	if (numParams > 0)
-	{
-		MemoryContext oldcontext;
-
-		oldcontext = MemoryContextSwitchTo(econtext->ecxt_per_tuple_memory);
-
-		process_query_params(econtext,
-							 fsstate->param_flinfo,
-							 fsstate->param_exprs,
-							 values);
-
-		MemoryContextSwitchTo(oldcontext);
-	}
-
-	/* Construct the DECLARE CURSOR command */
-	initStringInfo(&buf);
-	appendStringInfo(&buf, "DECLARE c%u CURSOR FOR\n%s",
-					 fsstate->cursor_number, fsstate->query);
-
-	/*
-	 * Notice that we pass NULL for paramTypes, thus forcing the remote server
-	 * to infer types for all parameters.  Since we explicitly cast every
-	 * parameter (see deparse.c), the "inference" is trivial and will produce
-	 * the desired result.  This allows us to avoid assuming that the remote
-	 * server has the same OIDs we do for the parameters' types.
-	 */
-	if (!PQsendQueryParams(conn, buf.data, numParams,
-						   NULL, values, NULL, NULL, 0))
-		pgfdw_report_error(ERROR, NULL, conn, false, buf.data);
-
-	/*
-	 * Get the result, and check for success.
-	 *
-	 * We don't use a PG_TRY block here, so be careful not to throw error
-	 * without releasing the PGresult.
-	 */
-	res = pgfdw_get_result(conn, buf.data);
-	if (PQresultStatus(res) != PGRES_COMMAND_OK)
-		pgfdw_report_error(ERROR, res, conn, true, fsstate->query);
-	PQclear(res);
-
-	/* Mark the cursor as created, and show no tuples have been retrieved */
-	fsstate->cursor_exists = true;
-	fsstate->tuples = NULL;
-	fsstate->num_tuples = 0;
-	fsstate->next_tuple = 0;
-	fsstate->fetch_ct_2 = 0;
-	fsstate->eof_reached = false;
-
-	/* Clean up */
-	pfree(buf.data);
-}
-
-/*
  * Fetch some more rows from the node's cursor.
  */
 static void
 fetch_more_data(ForeignScanState *node)
 {
 	MonetdbFdwScanState *fsstate = (MonetdbFdwScanState *) node->fdw_state;
-	PGresult   *volatile res = NULL;
 	MemoryContext oldcontext;
 
 	/*
@@ -3882,7 +2435,7 @@ fetch_more_data(ForeignScanState *node)
 	}
 	PG_FINALLY();
 	{
-		PQclear(res);
+
 	}
 	PG_END_TRY();
 
@@ -3948,910 +2501,6 @@ reset_transmission_modes(int nestlevel)
 }
 
 /*
- * Utility routine to close a cursor.
- */
-static void
-close_cursor(PGconn *conn, unsigned int cursor_number,
-			 PgFdwConnState *conn_state)
-{
-	char		sql[64];
-	PGresult   *res;
-
-	snprintf(sql, sizeof(sql), "CLOSE c%u", cursor_number);
-
-	/*
-	 * We don't use a PG_TRY block here, so be careful not to throw error
-	 * without releasing the PGresult.
-	 */
-	res = pgfdw_exec_query(conn, sql, conn_state);
-	if (PQresultStatus(res) != PGRES_COMMAND_OK)
-		pgfdw_report_error(ERROR, res, conn, true, sql);
-	PQclear(res);
-}
-
-/*
- * create_foreign_modify
- *		Construct an execution state of a foreign insert/update/delete
- *		operation
- */
-static PgFdwModifyState *
-create_foreign_modify(EState *estate,
-					  RangeTblEntry *rte,
-					  ResultRelInfo *resultRelInfo,
-					  CmdType operation,
-					  Plan *subplan,
-					  char *query,
-					  List *target_attrs,
-					  int values_end,
-					  bool has_returning,
-					  List *retrieved_attrs)
-{
-	PgFdwModifyState *fmstate;
-	Relation	rel = resultRelInfo->ri_RelationDesc;
-	TupleDesc	tupdesc = RelationGetDescr(rel);
-	Oid			userid;
-	ForeignTable *table;
-	UserMapping *user;
-	AttrNumber	n_params;
-	Oid			typefnoid;
-	bool		isvarlena;
-	ListCell   *lc;
-
-	/* Begin constructing PgFdwModifyState. */
-	fmstate = (PgFdwModifyState *) palloc0(sizeof(PgFdwModifyState));
-	fmstate->rel = rel;
-
-	/* Identify which user to do the remote access as. */
-	userid = ExecGetResultRelCheckAsUser(resultRelInfo, estate);
-
-	/* Get info about foreign table. */
-	table = GetForeignTable(RelationGetRelid(rel));
-	user = GetUserMapping(userid, table->serverid);
-
-	/* Open connection; report that we'll create a prepared statement. */
-	fmstate->conn = GetConnection(user, true, &fmstate->conn_state);
-	fmstate->p_name = NULL;		/* prepared statement not made yet */
-
-	/* Set up remote query information. */
-	fmstate->query = query;
-	if (operation == CMD_INSERT)
-	{
-		fmstate->query = pstrdup(fmstate->query);
-		fmstate->orig_query = pstrdup(fmstate->query);
-	}
-	fmstate->target_attrs = target_attrs;
-	fmstate->values_end = values_end;
-	fmstate->has_returning = has_returning;
-	fmstate->retrieved_attrs = retrieved_attrs;
-
-	/* Create context for per-tuple temp workspace. */
-	fmstate->temp_cxt = AllocSetContextCreate(estate->es_query_cxt,
-											  "monetdb_fdw temporary data",
-											  ALLOCSET_SMALL_SIZES);
-
-	/* Prepare for input conversion of RETURNING results. */
-	if (fmstate->has_returning)
-		fmstate->attinmeta = TupleDescGetAttInMetadata(tupdesc);
-
-	/* Prepare for output conversion of parameters used in prepared stmt. */
-	n_params = list_length(fmstate->target_attrs) + 1;
-	fmstate->p_flinfo = (FmgrInfo *) palloc0(sizeof(FmgrInfo) * n_params);
-	fmstate->p_nums = 0;
-
-	if (operation == CMD_UPDATE || operation == CMD_DELETE)
-	{
-		Assert(subplan != NULL);
-
-		/* Find the ctid resjunk column in the subplan's result */
-		fmstate->ctidAttno = ExecFindJunkAttributeInTlist(subplan->targetlist,
-														  "ctid");
-		if (!AttributeNumberIsValid(fmstate->ctidAttno))
-			elog(ERROR, "could not find junk ctid column");
-
-		/* First transmittable parameter will be ctid */
-		getTypeOutputInfo(TIDOID, &typefnoid, &isvarlena);
-		fmgr_info(typefnoid, &fmstate->p_flinfo[fmstate->p_nums]);
-		fmstate->p_nums++;
-	}
-
-	if (operation == CMD_INSERT || operation == CMD_UPDATE)
-	{
-		/* Set up for remaining transmittable parameters */
-		foreach(lc, fmstate->target_attrs)
-		{
-			int			attnum = lfirst_int(lc);
-			Form_pg_attribute attr = TupleDescAttr(tupdesc, attnum - 1);
-
-			Assert(!attr->attisdropped);
-
-			/* Ignore generated columns; they are set to DEFAULT */
-			if (attr->attgenerated)
-				continue;
-			getTypeOutputInfo(attr->atttypid, &typefnoid, &isvarlena);
-			fmgr_info(typefnoid, &fmstate->p_flinfo[fmstate->p_nums]);
-			fmstate->p_nums++;
-		}
-	}
-
-	Assert(fmstate->p_nums <= n_params);
-
-	/* Set batch_size from foreign server/table options. */
-	if (operation == CMD_INSERT)
-		fmstate->batch_size = get_batch_size_option(rel);
-
-	fmstate->num_slots = 1;
-
-	/* Initialize auxiliary state */
-	fmstate->aux_fmstate = NULL;
-
-	return fmstate;
-}
-
-/*
- * execute_foreign_modify
- *		Perform foreign-table modification as required, and fetch RETURNING
- *		result if any.  (This is the shared guts of MonetDB_ExecForeignInsert,
- *		MonetDB_ExecForeignBatchInsert, MonetDB_ExecForeignUpdate, and
- *		MonetDB_ExecForeignDelete.)
- */
-static TupleTableSlot **
-execute_foreign_modify(EState *estate,
-					   ResultRelInfo *resultRelInfo,
-					   CmdType operation,
-					   TupleTableSlot **slots,
-					   TupleTableSlot **planSlots,
-					   int *numSlots)
-{
-	PgFdwModifyState *fmstate = (PgFdwModifyState *) resultRelInfo->ri_FdwState;
-	ItemPointer ctid = NULL;
-	const char **p_values;
-	PGresult   *res;
-	int			n_rows;
-	StringInfoData sql;
-
-	/* The operation should be INSERT, UPDATE, or DELETE */
-	Assert(operation == CMD_INSERT ||
-		   operation == CMD_UPDATE ||
-		   operation == CMD_DELETE);
-
-	/* First, process a pending asynchronous request, if any. */
-	if (fmstate->conn_state->pendingAreq)
-		process_pending_request(fmstate->conn_state->pendingAreq);
-
-	/*
-	 * If the existing query was deparsed and prepared for a different number
-	 * of rows, rebuild it for the proper number.
-	 */
-	if (operation == CMD_INSERT && fmstate->num_slots != *numSlots)
-	{
-		/* Destroy the prepared statement created previously */
-		if (fmstate->p_name)
-			deallocate_query(fmstate);
-
-		/* Build INSERT string with numSlots records in its VALUES clause. */
-		initStringInfo(&sql);
-		rebuildInsertSql(&sql, fmstate->rel,
-						 fmstate->orig_query, fmstate->target_attrs,
-						 fmstate->values_end, fmstate->p_nums,
-						 *numSlots - 1);
-		pfree(fmstate->query);
-		fmstate->query = sql.data;
-		fmstate->num_slots = *numSlots;
-	}
-
-	/* Set up the prepared statement on the remote server, if we didn't yet */
-	if (!fmstate->p_name)
-		prepare_foreign_modify(fmstate);
-
-	/*
-	 * For UPDATE/DELETE, get the ctid that was passed up as a resjunk column
-	 */
-	if (operation == CMD_UPDATE || operation == CMD_DELETE)
-	{
-		Datum		datum;
-		bool		isNull;
-
-		datum = ExecGetJunkAttribute(planSlots[0],
-									 fmstate->ctidAttno,
-									 &isNull);
-		/* shouldn't ever get a null result... */
-		if (isNull)
-			elog(ERROR, "ctid is NULL");
-		ctid = (ItemPointer) DatumGetPointer(datum);
-	}
-
-	/* Convert parameters needed by prepared statement to text form */
-	p_values = convert_prep_stmt_params(fmstate, ctid, slots, *numSlots);
-
-	/*
-	 * Execute the prepared statement.
-	 */
-	if (!PQsendQueryPrepared(fmstate->conn,
-							 fmstate->p_name,
-							 fmstate->p_nums * (*numSlots),
-							 p_values,
-							 NULL,
-							 NULL,
-							 0))
-		pgfdw_report_error(ERROR, NULL, fmstate->conn, false, fmstate->query);
-
-	/*
-	 * Get the result, and check for success.
-	 *
-	 * We don't use a PG_TRY block here, so be careful not to throw error
-	 * without releasing the PGresult.
-	 */
-	res = pgfdw_get_result(fmstate->conn, fmstate->query);
-	if (PQresultStatus(res) !=
-		(fmstate->has_returning ? PGRES_TUPLES_OK : PGRES_COMMAND_OK))
-		pgfdw_report_error(ERROR, res, fmstate->conn, true, fmstate->query);
-
-	/* Check number of rows affected, and fetch RETURNING tuple if any */
-	if (fmstate->has_returning)
-	{
-		Assert(*numSlots == 1);
-		n_rows = PQntuples(res);
-		if (n_rows > 0)
-			store_returning_result(fmstate, slots[0], res);
-	}
-	else
-		n_rows = atoi(PQcmdTuples(res));
-
-	/* And clean up */
-	PQclear(res);
-
-	MemoryContextReset(fmstate->temp_cxt);
-
-	*numSlots = n_rows;
-
-	/*
-	 * Return NULL if nothing was inserted/updated/deleted on the remote end
-	 */
-	return (n_rows > 0) ? slots : NULL;
-}
-
-/*
- * prepare_foreign_modify
- *		Establish a prepared statement for execution of INSERT/UPDATE/DELETE
- */
-static void
-prepare_foreign_modify(PgFdwModifyState *fmstate)
-{
-	char		prep_name[NAMEDATALEN];
-	char	   *p_name;
-	PGresult   *res;
-
-	/*
-	 * The caller would already have processed a pending asynchronous request
-	 * if any, so no need to do it here.
-	 */
-
-	/* Construct name we'll use for the prepared statement. */
-	snprintf(prep_name, sizeof(prep_name), "pgsql_fdw_prep_%u",
-			 GetPrepStmtNumber(fmstate->conn));
-	p_name = pstrdup(prep_name);
-
-	/*
-	 * We intentionally do not specify parameter types here, but leave the
-	 * remote server to derive them by default.  This avoids possible problems
-	 * with the remote server using different type OIDs than we do.  All of
-	 * the prepared statements we use in this module are simple enough that
-	 * the remote server will make the right choices.
-	 */
-	if (!PQsendPrepare(fmstate->conn,
-					   p_name,
-					   fmstate->query,
-					   0,
-					   NULL))
-		pgfdw_report_error(ERROR, NULL, fmstate->conn, false, fmstate->query);
-
-	/*
-	 * Get the result, and check for success.
-	 *
-	 * We don't use a PG_TRY block here, so be careful not to throw error
-	 * without releasing the PGresult.
-	 */
-	res = pgfdw_get_result(fmstate->conn, fmstate->query);
-	if (PQresultStatus(res) != PGRES_COMMAND_OK)
-		pgfdw_report_error(ERROR, res, fmstate->conn, true, fmstate->query);
-	PQclear(res);
-
-	/* This action shows that the prepare has been done. */
-	fmstate->p_name = p_name;
-}
-
-/*
- * convert_prep_stmt_params
- *		Create array of text strings representing parameter values
- *
- * tupleid is ctid to send, or NULL if none
- * slot is slot to get remaining parameters from, or NULL if none
- *
- * Data is constructed in temp_cxt; caller should reset that after use.
- */
-static const char **
-convert_prep_stmt_params(PgFdwModifyState *fmstate,
-						 ItemPointer tupleid,
-						 TupleTableSlot **slots,
-						 int numSlots)
-{
-	const char **p_values;
-	int			i;
-	int			j;
-	int			pindex = 0;
-	MemoryContext oldcontext;
-
-	oldcontext = MemoryContextSwitchTo(fmstate->temp_cxt);
-
-	p_values = (const char **) palloc(sizeof(char *) * fmstate->p_nums * numSlots);
-
-	/* ctid is provided only for UPDATE/DELETE, which don't allow batching */
-	Assert(!(tupleid != NULL && numSlots > 1));
-
-	/* 1st parameter should be ctid, if it's in use */
-	if (tupleid != NULL)
-	{
-		Assert(numSlots == 1);
-		/* don't need set_transmission_modes for TID output */
-		p_values[pindex] = OutputFunctionCall(&fmstate->p_flinfo[pindex],
-											  PointerGetDatum(tupleid));
-		pindex++;
-	}
-
-	/* get following parameters from slots */
-	if (slots != NULL && fmstate->target_attrs != NIL)
-	{
-		TupleDesc	tupdesc = RelationGetDescr(fmstate->rel);
-		int			nestlevel;
-		ListCell   *lc;
-
-		nestlevel = set_transmission_modes();
-
-		for (i = 0; i < numSlots; i++)
-		{
-			j = (tupleid != NULL) ? 1 : 0;
-			foreach(lc, fmstate->target_attrs)
-			{
-				int			attnum = lfirst_int(lc);
-				Form_pg_attribute attr = TupleDescAttr(tupdesc, attnum - 1);
-				Datum		value;
-				bool		isnull;
-
-				/* Ignore generated columns; they are set to DEFAULT */
-				if (attr->attgenerated)
-					continue;
-				value = slot_getattr(slots[i], attnum, &isnull);
-				if (isnull)
-					p_values[pindex] = NULL;
-				else
-					p_values[pindex] = OutputFunctionCall(&fmstate->p_flinfo[j],
-														  value);
-				pindex++;
-				j++;
-			}
-		}
-
-		reset_transmission_modes(nestlevel);
-	}
-
-	Assert(pindex == fmstate->p_nums * numSlots);
-
-	MemoryContextSwitchTo(oldcontext);
-
-	return p_values;
-}
-
-/*
- * store_returning_result
- *		Store the result of a RETURNING clause
- *
- * On error, be sure to release the PGresult on the way out.  Callers do not
- * have PG_TRY blocks to ensure this happens.
- */
-static void
-store_returning_result(PgFdwModifyState *fmstate,
-					   TupleTableSlot *slot, PGresult *res)
-{
-	PG_TRY();
-	{
-		HeapTuple	newtup;
-
-		newtup = make_tuple_from_result_row(res, 0,
-											fmstate->rel,
-											fmstate->attinmeta,
-											fmstate->retrieved_attrs,
-											NULL,
-											fmstate->temp_cxt);
-
-		/*
-		 * The returning slot will not necessarily be suitable to store
-		 * heaptuples directly, so allow for conversion.
-		 */
-		ExecForceStoreHeapTuple(newtup, slot, true);
-	}
-	PG_CATCH();
-	{
-		PQclear(res);
-		PG_RE_THROW();
-	}
-	PG_END_TRY();
-}
-
-/*
- * finish_foreign_modify
- *		Release resources for a foreign insert/update/delete operation
- */
-static void
-finish_foreign_modify(PgFdwModifyState *fmstate)
-{
-	Assert(fmstate != NULL);
-
-	/* If we created a prepared statement, destroy it */
-	deallocate_query(fmstate);
-
-	/* Release remote connection */
-	ReleaseConnection(fmstate->conn);
-	fmstate->conn = NULL;
-}
-
-/*
- * deallocate_query
- *		Deallocate a prepared statement for a foreign insert/update/delete
- *		operation
- */
-static void
-deallocate_query(PgFdwModifyState *fmstate)
-{
-	char		sql[64];
-	PGresult   *res;
-
-	/* do nothing if the query is not allocated */
-	if (!fmstate->p_name)
-		return;
-
-	snprintf(sql, sizeof(sql), "DEALLOCATE %s", fmstate->p_name);
-
-	/*
-	 * We don't use a PG_TRY block here, so be careful not to throw error
-	 * without releasing the PGresult.
-	 */
-	res = pgfdw_exec_query(fmstate->conn, sql, fmstate->conn_state);
-	if (PQresultStatus(res) != PGRES_COMMAND_OK)
-		pgfdw_report_error(ERROR, res, fmstate->conn, true, sql);
-	PQclear(res);
-	pfree(fmstate->p_name);
-	fmstate->p_name = NULL;
-}
-
-/*
- * build_remote_returning
- *		Build a RETURNING targetlist of a remote query for performing an
- *		UPDATE/DELETE .. RETURNING on a join directly
- */
-static List *
-build_remote_returning(Index rtindex, Relation rel, List *returningList)
-{
-	bool		have_wholerow = false;
-	List	   *tlist = NIL;
-	List	   *vars;
-	ListCell   *lc;
-
-	Assert(returningList);
-
-	vars = pull_var_clause((Node *) returningList, PVC_INCLUDE_PLACEHOLDERS);
-
-	/*
-	 * If there's a whole-row reference to the target relation, then we'll
-	 * need all the columns of the relation.
-	 */
-	foreach(lc, vars)
-	{
-		Var		   *var = (Var *) lfirst(lc);
-
-		if (IsA(var, Var) &&
-			var->varno == rtindex &&
-			var->varattno == InvalidAttrNumber)
-		{
-			have_wholerow = true;
-			break;
-		}
-	}
-
-	if (have_wholerow)
-	{
-		TupleDesc	tupdesc = RelationGetDescr(rel);
-		int			i;
-
-		for (i = 1; i <= tupdesc->natts; i++)
-		{
-			Form_pg_attribute attr = TupleDescAttr(tupdesc, i - 1);
-			Var		   *var;
-
-			/* Ignore dropped attributes. */
-			if (attr->attisdropped)
-				continue;
-
-			var = makeVar(rtindex,
-						  i,
-						  attr->atttypid,
-						  attr->atttypmod,
-						  attr->attcollation,
-						  0);
-
-			tlist = lappend(tlist,
-							makeTargetEntry((Expr *) var,
-											list_length(tlist) + 1,
-											NULL,
-											false));
-		}
-	}
-
-	/* Now add any remaining columns to tlist. */
-	foreach(lc, vars)
-	{
-		Var		   *var = (Var *) lfirst(lc);
-
-		/*
-		 * No need for whole-row references to the target relation.  We don't
-		 * need system columns other than ctid and oid either, since those are
-		 * set locally.
-		 */
-		if (IsA(var, Var) &&
-			var->varno == rtindex &&
-			var->varattno <= InvalidAttrNumber &&
-			var->varattno != SelfItemPointerAttributeNumber)
-			continue;			/* don't need it */
-
-		if (tlist_member((Expr *) var, tlist))
-			continue;			/* already got it */
-
-		tlist = lappend(tlist,
-						makeTargetEntry((Expr *) var,
-										list_length(tlist) + 1,
-										NULL,
-										false));
-	}
-
-	list_free(vars);
-
-	return tlist;
-}
-
-/*
- * rebuild_fdw_scan_tlist
- *		Build new fdw_scan_tlist of given foreign-scan plan node from given
- *		tlist
- *
- * There might be columns that the fdw_scan_tlist of the given foreign-scan
- * plan node contains that the given tlist doesn't.  The fdw_scan_tlist would
- * have contained resjunk columns such as 'ctid' of the target relation and
- * 'wholerow' of non-target relations, but the tlist might not contain them,
- * for example.  So, adjust the tlist so it contains all the columns specified
- * in the fdw_scan_tlist; else setrefs.c will get confused.
- */
-static void
-rebuild_fdw_scan_tlist(ForeignScan *fscan, List *tlist)
-{
-	List	   *new_tlist = tlist;
-	List	   *old_tlist = fscan->fdw_scan_tlist;
-	ListCell   *lc;
-
-	foreach(lc, old_tlist)
-	{
-		TargetEntry *tle = (TargetEntry *) lfirst(lc);
-
-		if (tlist_member(tle->expr, new_tlist))
-			continue;			/* already got it */
-
-		new_tlist = lappend(new_tlist,
-							makeTargetEntry(tle->expr,
-											list_length(new_tlist) + 1,
-											NULL,
-											false));
-	}
-	fscan->fdw_scan_tlist = new_tlist;
-}
-
-/*
- * Execute a direct UPDATE/DELETE statement.
- */
-static void
-execute_dml_stmt(ForeignScanState *node)
-{
-	PgFdwDirectModifyState *dmstate = (PgFdwDirectModifyState *) node->fdw_state;
-	ExprContext *econtext = node->ss.ps.ps_ExprContext;
-	int			numParams = dmstate->numParams;
-	const char **values = dmstate->param_values;
-
-	/* First, process a pending asynchronous request, if any. */
-	if (dmstate->conn_state->pendingAreq)
-		process_pending_request(dmstate->conn_state->pendingAreq);
-
-	/*
-	 * Construct array of query parameter values in text format.
-	 */
-	if (numParams > 0)
-		process_query_params(econtext,
-							 dmstate->param_flinfo,
-							 dmstate->param_exprs,
-							 values);
-
-	/*
-	 * Notice that we pass NULL for paramTypes, thus forcing the remote server
-	 * to infer types for all parameters.  Since we explicitly cast every
-	 * parameter (see deparse.c), the "inference" is trivial and will produce
-	 * the desired result.  This allows us to avoid assuming that the remote
-	 * server has the same OIDs we do for the parameters' types.
-	 */
-	if (!PQsendQueryParams(dmstate->conn, dmstate->query, numParams,
-						   NULL, values, NULL, NULL, 0))
-		pgfdw_report_error(ERROR, NULL, dmstate->conn, false, dmstate->query);
-
-	/*
-	 * Get the result, and check for success.
-	 *
-	 * We don't use a PG_TRY block here, so be careful not to throw error
-	 * without releasing the PGresult.
-	 */
-	dmstate->result = pgfdw_get_result(dmstate->conn, dmstate->query);
-	if (PQresultStatus(dmstate->result) !=
-		(dmstate->has_returning ? PGRES_TUPLES_OK : PGRES_COMMAND_OK))
-		pgfdw_report_error(ERROR, dmstate->result, dmstate->conn, true,
-						   dmstate->query);
-
-	/* Get the number of rows affected. */
-	if (dmstate->has_returning)
-		dmstate->num_tuples = PQntuples(dmstate->result);
-	else
-		dmstate->num_tuples = atoi(PQcmdTuples(dmstate->result));
-}
-
-/*
- * Get the result of a RETURNING clause.
- */
-static TupleTableSlot *
-get_returning_data(ForeignScanState *node)
-{
-	PgFdwDirectModifyState *dmstate = (PgFdwDirectModifyState *) node->fdw_state;
-	EState	   *estate = node->ss.ps.state;
-	ResultRelInfo *resultRelInfo = node->resultRelInfo;
-	TupleTableSlot *slot = node->ss.ss_ScanTupleSlot;
-	TupleTableSlot *resultSlot;
-
-	Assert(resultRelInfo->ri_projectReturning);
-
-	/* If we didn't get any tuples, must be end of data. */
-	if (dmstate->next_tuple >= dmstate->num_tuples)
-		return ExecClearTuple(slot);
-
-	/* Increment the command es_processed count if necessary. */
-	if (dmstate->set_processed)
-		estate->es_processed += 1;
-
-	/*
-	 * Store a RETURNING tuple.  If has_returning is false, just emit a dummy
-	 * tuple.  (has_returning is false when the local query is of the form
-	 * "UPDATE/DELETE .. RETURNING 1" for example.)
-	 */
-	if (!dmstate->has_returning)
-	{
-		ExecStoreAllNullTuple(slot);
-		resultSlot = slot;
-	}
-	else
-	{
-		/*
-		 * On error, be sure to release the PGresult on the way out.  Callers
-		 * do not have PG_TRY blocks to ensure this happens.
-		 */
-		PG_TRY();
-		{
-			HeapTuple	newtup;
-
-			newtup = make_tuple_from_result_row(dmstate->result,
-												dmstate->next_tuple,
-												dmstate->rel,
-												dmstate->attinmeta,
-												dmstate->retrieved_attrs,
-												node,
-												dmstate->temp_cxt);
-			ExecStoreHeapTuple(newtup, slot, false);
-		}
-		PG_CATCH();
-		{
-			PQclear(dmstate->result);
-			PG_RE_THROW();
-		}
-		PG_END_TRY();
-
-		/* Get the updated/deleted tuple. */
-		if (dmstate->rel)
-			resultSlot = slot;
-		else
-			resultSlot = apply_returning_filter(dmstate, resultRelInfo, slot, estate);
-	}
-	dmstate->next_tuple++;
-
-	/* Make slot available for evaluation of the local query RETURNING list. */
-	resultRelInfo->ri_projectReturning->pi_exprContext->ecxt_scantuple =
-		resultSlot;
-
-	return slot;
-}
-
-/*
- * Initialize a filter to extract an updated/deleted tuple from a scan tuple.
- */
-static void
-init_returning_filter(PgFdwDirectModifyState *dmstate,
-					  List *fdw_scan_tlist,
-					  Index rtindex)
-{
-	TupleDesc	resultTupType = RelationGetDescr(dmstate->resultRel);
-	ListCell   *lc;
-	int			i;
-
-	/*
-	 * Calculate the mapping between the fdw_scan_tlist's entries and the
-	 * result tuple's attributes.
-	 *
-	 * The "map" is an array of indexes of the result tuple's attributes in
-	 * fdw_scan_tlist, i.e., one entry for every attribute of the result
-	 * tuple.  We store zero for any attributes that don't have the
-	 * corresponding entries in that list, marking that a NULL is needed in
-	 * the result tuple.
-	 *
-	 * Also get the indexes of the entries for ctid and oid if any.
-	 */
-	dmstate->attnoMap = (AttrNumber *)
-		palloc0(resultTupType->natts * sizeof(AttrNumber));
-
-	dmstate->ctidAttno = dmstate->oidAttno = 0;
-
-	i = 1;
-	dmstate->hasSystemCols = false;
-	foreach(lc, fdw_scan_tlist)
-	{
-		TargetEntry *tle = (TargetEntry *) lfirst(lc);
-		Var		   *var = (Var *) tle->expr;
-
-		Assert(IsA(var, Var));
-
-		/*
-		 * If the Var is a column of the target relation to be retrieved from
-		 * the foreign server, get the index of the entry.
-		 */
-		if (var->varno == rtindex &&
-			list_member_int(dmstate->retrieved_attrs, i))
-		{
-			int			attrno = var->varattno;
-
-			if (attrno < 0)
-			{
-				/*
-				 * We don't retrieve system columns other than ctid and oid.
-				 */
-				if (attrno == SelfItemPointerAttributeNumber)
-					dmstate->ctidAttno = i;
-				else
-					Assert(false);
-				dmstate->hasSystemCols = true;
-			}
-			else
-			{
-				/*
-				 * We don't retrieve whole-row references to the target
-				 * relation either.
-				 */
-				Assert(attrno > 0);
-
-				dmstate->attnoMap[attrno - 1] = i;
-			}
-		}
-		i++;
-	}
-}
-
-/*
- * Extract and return an updated/deleted tuple from a scan tuple.
- */
-static TupleTableSlot *
-apply_returning_filter(PgFdwDirectModifyState *dmstate,
-					   ResultRelInfo *resultRelInfo,
-					   TupleTableSlot *slot,
-					   EState *estate)
-{
-	TupleDesc	resultTupType = RelationGetDescr(dmstate->resultRel);
-	TupleTableSlot *resultSlot;
-	Datum	   *values;
-	bool	   *isnull;
-	Datum	   *old_values;
-	bool	   *old_isnull;
-	int			i;
-
-	/*
-	 * Use the return tuple slot as a place to store the result tuple.
-	 */
-	resultSlot = ExecGetReturningSlot(estate, resultRelInfo);
-
-	/*
-	 * Extract all the values of the scan tuple.
-	 */
-	slot_getallattrs(slot);
-	old_values = slot->tts_values;
-	old_isnull = slot->tts_isnull;
-
-	/*
-	 * Prepare to build the result tuple.
-	 */
-	ExecClearTuple(resultSlot);
-	values = resultSlot->tts_values;
-	isnull = resultSlot->tts_isnull;
-
-	/*
-	 * Transpose data into proper fields of the result tuple.
-	 */
-	for (i = 0; i < resultTupType->natts; i++)
-	{
-		int			j = dmstate->attnoMap[i];
-
-		if (j == 0)
-		{
-			values[i] = (Datum) 0;
-			isnull[i] = true;
-		}
-		else
-		{
-			values[i] = old_values[j - 1];
-			isnull[i] = old_isnull[j - 1];
-		}
-	}
-
-	/*
-	 * Build the virtual tuple.
-	 */
-	ExecStoreVirtualTuple(resultSlot);
-
-	/*
-	 * If we have any system columns to return, materialize a heap tuple in
-	 * the slot from column values set above and install system columns in
-	 * that tuple.
-	 */
-	if (dmstate->hasSystemCols)
-	{
-		HeapTuple	resultTup = ExecFetchSlotHeapTuple(resultSlot, true, NULL);
-
-		/* ctid */
-		if (dmstate->ctidAttno)
-		{
-			ItemPointer ctid = NULL;
-
-			ctid = (ItemPointer) DatumGetPointer(old_values[dmstate->ctidAttno - 1]);
-			resultTup->t_self = *ctid;
-		}
-
-		/*
-		 * And remaining columns
-		 *
-		 * Note: since we currently don't allow the target relation to appear
-		 * on the nullable side of an outer join, any system columns wouldn't
-		 * go to NULL.
-		 *
-		 * Note: no need to care about tableoid here because it will be
-		 * initialized in ExecProcessReturning().
-		 */
-		HeapTupleHeaderSetXmin(resultTup->t_data, InvalidTransactionId);
-		HeapTupleHeaderSetXmax(resultTup->t_data, InvalidTransactionId);
-		HeapTupleHeaderSetCmin(resultTup->t_data, InvalidTransactionId);
-	}
-
-	/*
-	 * And return the result tuple.
-	 */
-	return resultSlot;
-}
-
-/*
  * Prepare for processing of parameters used in remote query.
  */
 static void
@@ -4897,46 +2546,6 @@ prepare_query_params(PlanState *node,
 }
 
 /*
- * Construct array of query parameter values in text format.
- */
-static void
-process_query_params(ExprContext *econtext,
-					 FmgrInfo *param_flinfo,
-					 List *param_exprs,
-					 const char **param_values)
-{
-	int			nestlevel;
-	int			i;
-	ListCell   *lc;
-
-	nestlevel = set_transmission_modes();
-
-	i = 0;
-	foreach(lc, param_exprs)
-	{
-		ExprState  *expr_state = (ExprState *) lfirst(lc);
-		Datum		expr_value;
-		bool		isNull;
-
-		/* Evaluate the parameter expression */
-		expr_value = ExecEvalExpr(expr_state, econtext, &isNull);
-
-		/*
-		 * Get string representation of each parameter value by invoking
-		 * type-specific output function, unless the value is null.
-		 */
-		if (isNull)
-			param_values[i] = NULL;
-		else
-			param_values[i] = OutputFunctionCall(&param_flinfo[i], expr_value);
-
-		i++;
-	}
-
-	reset_transmission_modes(nestlevel);
-}
-
-/*
  * MonetDB_AnalyzeForeignTable
  *		Test whether analyzing this foreign table is supported
  */
@@ -4945,509 +2554,7 @@ MonetDB_AnalyzeForeignTable(Relation relation,
 							AcquireSampleRowsFunc *func,
 							BlockNumber *totalpages)
 {
-	ForeignTable *table;
-	UserMapping *user;
-	PGconn	   *conn;
-	StringInfoData sql;
-	PGresult   *volatile res = NULL;
-
-	/* Return the row-analysis function pointer */
-	*func = MonetDB_AcquireSampleRowsFunc;
-
-	/*
-	 * Now we have to get the number of pages.  It's annoying that the ANALYZE
-	 * API requires us to return that now, because it forces some duplication
-	 * of effort between this routine and MonetDB_AcquireSampleRowsFunc.  But
-	 * it's probably not worth redefining that API at this point.
-	 */
-
-	/*
-	 * Get the connection to use.  We do the remote access as the table's
-	 * owner, even if the ANALYZE was started by some other user.
-	 */
-	table = GetForeignTable(RelationGetRelid(relation));
-	user = GetUserMapping(relation->rd_rel->relowner, table->serverid);
-	conn = GetConnection(user, false, NULL);
-
-	/*
-	 * Construct command to get page count for relation.
-	 */
-	initStringInfo(&sql);
-	deparseAnalyzeSizeSql(&sql, relation);
-
-	/* In what follows, do not risk leaking any PGresults. */
-	PG_TRY();
-	{
-		res = pgfdw_exec_query(conn, sql.data, NULL);
-		if (PQresultStatus(res) != PGRES_TUPLES_OK)
-			pgfdw_report_error(ERROR, res, conn, false, sql.data);
-
-		if (PQntuples(res) != 1 || PQnfields(res) != 1)
-			elog(ERROR, "unexpected result from deparseAnalyzeSizeSql query");
-		*totalpages = strtoul(PQgetvalue(res, 0, 0), NULL, 10);
-	}
-	PG_FINALLY();
-	{
-		PQclear(res);
-	}
-	PG_END_TRY();
-
-	ReleaseConnection(conn);
-
-	return true;
-}
-
-/*
- * MonetDB_GetAnalyzeInfoForForeignTable
- *		Count tuples in foreign table (just get pg_class.reltuples).
- *
- * can_tablesample determines if the remote relation supports acquiring the
- * sample using TABLESAMPLE.
- */
-static double
-MonetDB_GetAnalyzeInfoForForeignTable(Relation relation, bool *can_tablesample)
-{
-	ForeignTable *table;
-	UserMapping *user;
-	PGconn	   *conn;
-	StringInfoData sql;
-	PGresult   *volatile res = NULL;
-	volatile double reltuples = -1;
-	volatile char relkind = 0;
-
-	/* assume the remote relation does not support TABLESAMPLE */
-	*can_tablesample = false;
-
-	/*
-	 * Get the connection to use.  We do the remote access as the table's
-	 * owner, even if the ANALYZE was started by some other user.
-	 */
-	table = GetForeignTable(RelationGetRelid(relation));
-	user = GetUserMapping(relation->rd_rel->relowner, table->serverid);
-	conn = GetConnection(user, false, NULL);
-
-	/*
-	 * Construct command to get page count for relation.
-	 */
-	initStringInfo(&sql);
-	deparseAnalyzeInfoSql(&sql, relation);
-
-	/* In what follows, do not risk leaking any PGresults. */
-	PG_TRY();
-	{
-		res = pgfdw_exec_query(conn, sql.data, NULL);
-		if (PQresultStatus(res) != PGRES_TUPLES_OK)
-			pgfdw_report_error(ERROR, res, conn, false, sql.data);
-
-		if (PQntuples(res) != 1 || PQnfields(res) != 2)
-			elog(ERROR, "unexpected result from deparseAnalyzeInfoSql query");
-		reltuples = strtod(PQgetvalue(res, 0, 0), NULL);
-		relkind = *(PQgetvalue(res, 0, 1));
-	}
-	PG_FINALLY();
-	{
-		if (res)
-			PQclear(res);
-	}
-	PG_END_TRY();
-
-	ReleaseConnection(conn);
-
-	/* TABLESAMPLE is supported only for regular tables and matviews */
-	*can_tablesample = (relkind == RELKIND_RELATION ||
-						relkind == RELKIND_MATVIEW ||
-						relkind == RELKIND_PARTITIONED_TABLE);
-
-	return reltuples;
-}
-
-/*
- * Acquire a random sample of rows from foreign table managed by monetdb_fdw.
- *
- * Selected rows are returned in the caller-allocated array rows[],
- * which must have at least targrows entries.
- * The actual number of rows selected is returned as the function result.
- * We also count the total number of rows in the table and return it into
- * *totalrows.  Note that *totaldeadrows is always set to 0.
- *
- * Note that the returned list of rows is not always in order by physical
- * position in the table.  Therefore, correlation estimates derived later
- * may be meaningless, but it's OK because we don't use the estimates
- * currently (the planner only pays attention to correlation for indexscans).
- */
-static int
-MonetDB_AcquireSampleRowsFunc(Relation relation, int elevel,
-							  HeapTuple *rows, int targrows,
-							  double *totalrows,
-							  double *totaldeadrows)
-{
-	PgFdwAnalyzeState astate;
-	ForeignTable *table;
-	ForeignServer *server;
-	UserMapping *user;
-	PGconn	   *conn;
-	int			server_version_num;
-	PgFdwSamplingMethod method = ANALYZE_SAMPLE_AUTO;	/* auto is default */
-	double		sample_frac = -1.0;
-	double		reltuples;
-	unsigned int cursor_number;
-	StringInfoData sql;
-	PGresult   *volatile res = NULL;
-	ListCell   *lc;
-
-	/* Initialize workspace state */
-	astate.rel = relation;
-	astate.attinmeta = TupleDescGetAttInMetadata(RelationGetDescr(relation));
-
-	astate.rows = rows;
-	astate.targrows = targrows;
-	astate.numrows = 0;
-	astate.samplerows = 0;
-	astate.rowstoskip = -1;		/* -1 means not set yet */
-	reservoir_init_selection_state(&astate.rstate, targrows);
-
-	/* Remember ANALYZE context, and create a per-tuple temp context */
-	astate.anl_cxt = CurrentMemoryContext;
-	astate.temp_cxt = AllocSetContextCreate(CurrentMemoryContext,
-											"monetdb_fdw temporary data",
-											ALLOCSET_SMALL_SIZES);
-
-	/*
-	 * Get the connection to use.  We do the remote access as the table's
-	 * owner, even if the ANALYZE was started by some other user.
-	 */
-	table = GetForeignTable(RelationGetRelid(relation));
-	server = GetForeignServer(table->serverid);
-	user = GetUserMapping(relation->rd_rel->relowner, table->serverid);
-	conn = GetConnection(user, false, NULL);
-
-	/* We'll need server version, so fetch it now. */
-	server_version_num = PQserverVersion(conn);
-
-	/*
-	 * What sampling method should we use?
-	 */
-	foreach(lc, server->options)
-	{
-		DefElem    *def = (DefElem *) lfirst(lc);
-
-		if (strcmp(def->defname, "analyze_sampling") == 0)
-		{
-			char	   *value = defGetString(def);
-
-			if (strcmp(value, "off") == 0)
-				method = ANALYZE_SAMPLE_OFF;
-			else if (strcmp(value, "auto") == 0)
-				method = ANALYZE_SAMPLE_AUTO;
-			else if (strcmp(value, "random") == 0)
-				method = ANALYZE_SAMPLE_RANDOM;
-			else if (strcmp(value, "system") == 0)
-				method = ANALYZE_SAMPLE_SYSTEM;
-			else if (strcmp(value, "bernoulli") == 0)
-				method = ANALYZE_SAMPLE_BERNOULLI;
-
-			break;
-		}
-	}
-
-	foreach(lc, table->options)
-	{
-		DefElem    *def = (DefElem *) lfirst(lc);
-
-		if (strcmp(def->defname, "analyze_sampling") == 0)
-		{
-			char	   *value = defGetString(def);
-
-			if (strcmp(value, "off") == 0)
-				method = ANALYZE_SAMPLE_OFF;
-			else if (strcmp(value, "auto") == 0)
-				method = ANALYZE_SAMPLE_AUTO;
-			else if (strcmp(value, "random") == 0)
-				method = ANALYZE_SAMPLE_RANDOM;
-			else if (strcmp(value, "system") == 0)
-				method = ANALYZE_SAMPLE_SYSTEM;
-			else if (strcmp(value, "bernoulli") == 0)
-				method = ANALYZE_SAMPLE_BERNOULLI;
-
-			break;
-		}
-	}
-
-	/*
-	 * Error-out if explicitly required one of the TABLESAMPLE methods, but
-	 * the server does not support it.
-	 */
-	if ((server_version_num < 95000) &&
-		(method == ANALYZE_SAMPLE_SYSTEM ||
-		 method == ANALYZE_SAMPLE_BERNOULLI))
-		ereport(ERROR,
-				(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-				 errmsg("remote server does not support TABLESAMPLE feature")));
-
-	/*
-	 * If we've decided to do remote sampling, calculate the sampling rate. We
-	 * need to get the number of tuples from the remote server, but skip that
-	 * network round-trip if not needed.
-	 */
-	if (method != ANALYZE_SAMPLE_OFF)
-	{
-		bool		can_tablesample;
-
-		reltuples = MonetDB_GetAnalyzeInfoForForeignTable(relation,
-														  &can_tablesample);
-
-		/*
-		 * Make sure we're not choosing TABLESAMPLE when the remote relation
-		 * does not support that. But only do this for "auto" - if the user
-		 * explicitly requested BERNOULLI/SYSTEM, it's better to fail.
-		 */
-		if (!can_tablesample && (method == ANALYZE_SAMPLE_AUTO))
-			method = ANALYZE_SAMPLE_RANDOM;
-
-		/*
-		 * Remote's reltuples could be 0 or -1 if the table has never been
-		 * vacuumed/analyzed.  In that case, disable sampling after all.
-		 */
-		if ((reltuples <= 0) || (targrows >= reltuples))
-			method = ANALYZE_SAMPLE_OFF;
-		else
-		{
-			/*
-			 * All supported sampling methods require sampling rate, not
-			 * target rows directly, so we calculate that using the remote
-			 * reltuples value. That's imperfect, because it might be off a
-			 * good deal, but that's not something we can (or should) address
-			 * here.
-			 *
-			 * If reltuples is too low (i.e. when table grew), we'll end up
-			 * sampling more rows - but then we'll apply the local sampling,
-			 * so we get the expected sample size. This is the same outcome as
-			 * without remote sampling.
-			 *
-			 * If reltuples is too high (e.g. after bulk DELETE), we will end
-			 * up sampling too few rows.
-			 *
-			 * We can't really do much better here - we could try sampling a
-			 * bit more rows, but we don't know how off the reltuples value is
-			 * so how much is "a bit more"?
-			 *
-			 * Furthermore, the targrows value for partitions is determined
-			 * based on table size (relpages), which can be off in different
-			 * ways too. Adjusting the sampling rate here might make the issue
-			 * worse.
-			 */
-			sample_frac = targrows / reltuples;
-
-			/*
-			 * We should never get sampling rate outside the valid range
-			 * (between 0.0 and 1.0), because those cases should be covered by
-			 * the previous branch that sets ANALYZE_SAMPLE_OFF.
-			 */
-			Assert(sample_frac >= 0.0 && sample_frac <= 1.0);
-		}
-	}
-
-	/*
-	 * For "auto" method, pick the one we believe is best. For servers with
-	 * TABLESAMPLE support we pick BERNOULLI, for old servers we fall-back to
-	 * random() to at least reduce network transfer.
-	 */
-	if (method == ANALYZE_SAMPLE_AUTO)
-	{
-		if (server_version_num < 95000)
-			method = ANALYZE_SAMPLE_RANDOM;
-		else
-			method = ANALYZE_SAMPLE_BERNOULLI;
-	}
-
-	/*
-	 * Construct cursor that retrieves whole rows from remote.
-	 */
-	cursor_number = GetCursorNumber(conn);
-	initStringInfo(&sql);
-	appendStringInfo(&sql, "DECLARE c%u CURSOR FOR ", cursor_number);
-
-	deparseAnalyzeSql(&sql, relation, method, sample_frac, &astate.retrieved_attrs);
-
-	/* In what follows, do not risk leaking any PGresults. */
-	PG_TRY();
-	{
-		char		fetch_sql[64];
-		int			fetch_size;
-
-		res = pgfdw_exec_query(conn, sql.data, NULL);
-		if (PQresultStatus(res) != PGRES_COMMAND_OK)
-			pgfdw_report_error(ERROR, res, conn, false, sql.data);
-		PQclear(res);
-		res = NULL;
-
-		/*
-		 * Determine the fetch size.  The default is arbitrary, but shouldn't
-		 * be enormous.
-		 */
-		fetch_size = 100;
-		foreach(lc, server->options)
-		{
-			DefElem    *def = (DefElem *) lfirst(lc);
-
-			if (strcmp(def->defname, "fetch_size") == 0)
-			{
-				(void) parse_int(defGetString(def), &fetch_size, 0, NULL);
-				break;
-			}
-		}
-		foreach(lc, table->options)
-		{
-			DefElem    *def = (DefElem *) lfirst(lc);
-
-			if (strcmp(def->defname, "fetch_size") == 0)
-			{
-				(void) parse_int(defGetString(def), &fetch_size, 0, NULL);
-				break;
-			}
-		}
-
-		/* Construct command to fetch rows from remote. */
-		snprintf(fetch_sql, sizeof(fetch_sql), "FETCH %d FROM c%u",
-				 fetch_size, cursor_number);
-
-		/* Retrieve and process rows a batch at a time. */
-		for (;;)
-		{
-			int			numrows;
-			int			i;
-
-			/* Allow users to cancel long query */
-			CHECK_FOR_INTERRUPTS();
-
-			/*
-			 * XXX possible future improvement: if rowstoskip is large, we
-			 * could issue a MOVE rather than physically fetching the rows,
-			 * then just adjust rowstoskip and samplerows appropriately.
-			 */
-
-			/* Fetch some rows */
-			res = pgfdw_exec_query(conn, fetch_sql, NULL);
-			/* On error, report the original query, not the FETCH. */
-			if (PQresultStatus(res) != PGRES_TUPLES_OK)
-				pgfdw_report_error(ERROR, res, conn, false, sql.data);
-
-			/* Process whatever we got. */
-			numrows = PQntuples(res);
-			for (i = 0; i < numrows; i++)
-				analyze_row_processor(res, i, &astate);
-
-			PQclear(res);
-			res = NULL;
-
-			/* Must be EOF if we didn't get all the rows requested. */
-			if (numrows < fetch_size)
-				break;
-		}
-
-		/* Close the cursor, just to be tidy. */
-		close_cursor(conn, cursor_number, NULL);
-	}
-	PG_CATCH();
-	{
-		PQclear(res);
-		PG_RE_THROW();
-	}
-	PG_END_TRY();
-
-	ReleaseConnection(conn);
-
-	/* We assume that we have no dead tuple. */
-	*totaldeadrows = 0.0;
-
-	/*
-	 * Without sampling, we've retrieved all living tuples from foreign
-	 * server, so report that as totalrows.  Otherwise use the reltuples
-	 * estimate we got from the remote side.
-	 */
-	if (method == ANALYZE_SAMPLE_OFF)
-		*totalrows = astate.samplerows;
-	else
-		*totalrows = reltuples;
-
-	/*
-	 * Emit some interesting relation info
-	 */
-	ereport(elevel,
-			(errmsg("\"%s\": table contains %.0f rows, %d rows in sample",
-					RelationGetRelationName(relation),
-					*totalrows, astate.numrows)));
-
-	return astate.numrows;
-}
-
-/*
- * Collect sample rows from the result of query.
- *	 - Use all tuples in sample until target # of samples are collected.
- *	 - Subsequently, replace already-sampled tuples randomly.
- */
-static void
-analyze_row_processor(PGresult *res, int row, PgFdwAnalyzeState *astate)
-{
-	int			targrows = astate->targrows;
-	int			pos;			/* array index to store tuple in */
-	MemoryContext oldcontext;
-
-	/* Always increment sample row counter. */
-	astate->samplerows += 1;
-
-	/*
-	 * Determine the slot where this sample row should be stored.  Set pos to
-	 * negative value to indicate the row should be skipped.
-	 */
-	if (astate->numrows < targrows)
-	{
-		/* First targrows rows are always included into the sample */
-		pos = astate->numrows++;
-	}
-	else
-	{
-		/*
-		 * Now we start replacing tuples in the sample until we reach the end
-		 * of the relation.  Same algorithm as in acquire_sample_rows in
-		 * analyze.c; see Jeff Vitter's paper.
-		 */
-		if (astate->rowstoskip < 0)
-			astate->rowstoskip = reservoir_get_next_S(&astate->rstate, astate->samplerows, targrows);
-
-		if (astate->rowstoskip <= 0)
-		{
-			/* Choose a random reservoir element to replace. */
-			pos = (int) (targrows * sampler_random_fract(&astate->rstate.randstate));
-			Assert(pos >= 0 && pos < targrows);
-			heap_freetuple(astate->rows[pos]);
-		}
-		else
-		{
-			/* Skip this tuple. */
-			pos = -1;
-		}
-
-		astate->rowstoskip -= 1;
-	}
-
-	if (pos >= 0)
-	{
-		/*
-		 * Create sample tuple from current result row, and store it in the
-		 * position determined above.  The tuple has to be created in anl_cxt.
-		 */
-		oldcontext = MemoryContextSwitchTo(astate->anl_cxt);
-
-		astate->rows[pos] = make_tuple_from_result_row(res, row,
-													   astate->rel,
-													   astate->attinmeta,
-													   astate->retrieved_attrs,
-													   NULL,
-													   astate->temp_cxt);
-
-		MemoryContextSwitchTo(oldcontext);
-	}
+	elog(ERROR, "MonetDB_AnalyzeForeignTable not supported yet");
 }
 
 /*
@@ -5456,562 +2563,7 @@ analyze_row_processor(PGresult *res, int row, PgFdwAnalyzeState *astate)
 static List *
 MonetDB_ImportForeignSchema(ImportForeignSchemaStmt *stmt, Oid serverOid)
 {
-	List	   *commands = NIL;
-	bool		import_collate = true;
-	bool		import_default = false;
-	bool		import_generated = true;
-	bool		import_not_null = true;
-	ForeignServer *server;
-	UserMapping *mapping;
-	PGconn	   *conn;
-	StringInfoData buf;
-	PGresult   *volatile res = NULL;
-	int			numrows,
-				i;
-	ListCell   *lc;
-
-	/* Parse statement options */
-	foreach(lc, stmt->options)
-	{
-		DefElem    *def = (DefElem *) lfirst(lc);
-
-		if (strcmp(def->defname, "import_collate") == 0)
-			import_collate = defGetBoolean(def);
-		else if (strcmp(def->defname, "import_default") == 0)
-			import_default = defGetBoolean(def);
-		else if (strcmp(def->defname, "import_generated") == 0)
-			import_generated = defGetBoolean(def);
-		else if (strcmp(def->defname, "import_not_null") == 0)
-			import_not_null = defGetBoolean(def);
-		else
-			ereport(ERROR,
-					(errcode(ERRCODE_FDW_INVALID_OPTION_NAME),
-					 errmsg("invalid option \"%s\"", def->defname)));
-	}
-
-	/*
-	 * Get connection to the foreign server.  Connection manager will
-	 * establish new connection if necessary.
-	 */
-	server = GetForeignServer(serverOid);
-	mapping = GetUserMapping(GetUserId(), server->serverid);
-	conn = GetConnection(mapping, false, NULL);
-
-	/* Don't attempt to import collation if remote server hasn't got it */
-	if (PQserverVersion(conn) < 90100)
-		import_collate = false;
-
-	/* Create workspace for strings */
-	initStringInfo(&buf);
-
-	/* In what follows, do not risk leaking any PGresults. */
-	PG_TRY();
-	{
-		/* Check that the schema really exists */
-		appendStringInfoString(&buf, "SELECT 1 FROM pg_catalog.pg_namespace WHERE nspname = ");
-		deparseStringLiteral(&buf, stmt->remote_schema);
-
-		res = pgfdw_exec_query(conn, buf.data, NULL);
-		if (PQresultStatus(res) != PGRES_TUPLES_OK)
-			pgfdw_report_error(ERROR, res, conn, false, buf.data);
-
-		if (PQntuples(res) != 1)
-			ereport(ERROR,
-					(errcode(ERRCODE_FDW_SCHEMA_NOT_FOUND),
-					 errmsg("schema \"%s\" is not present on foreign server \"%s\"",
-							stmt->remote_schema, server->servername)));
-
-		PQclear(res);
-		res = NULL;
-		resetStringInfo(&buf);
-
-		/*
-		 * Fetch all table data from this schema, possibly restricted by
-		 * EXCEPT or LIMIT TO.  (We don't actually need to pay any attention
-		 * to EXCEPT/LIMIT TO here, because the core code will filter the
-		 * statements we return according to those lists anyway.  But it
-		 * should save a few cycles to not process excluded tables in the
-		 * first place.)
-		 *
-		 * Import table data for partitions only when they are explicitly
-		 * specified in LIMIT TO clause. Otherwise ignore them and only
-		 * include the definitions of the root partitioned tables to allow
-		 * access to the complete remote data set locally in the schema
-		 * imported.
-		 *
-		 * Note: because we run the connection with search_path restricted to
-		 * pg_catalog, the format_type() and pg_get_expr() outputs will always
-		 * include a schema name for types/functions in other schemas, which
-		 * is what we want.
-		 */
-		appendStringInfoString(&buf,
-							   "SELECT relname, "
-							   "  attname, "
-							   "  format_type(atttypid, atttypmod), "
-							   "  attnotnull, "
-							   "  pg_get_expr(adbin, adrelid), ");
-
-		/* Generated columns are supported since MonetDB_ 12 */
-		if (PQserverVersion(conn) >= 120000)
-			appendStringInfoString(&buf,
-								   "  attgenerated, ");
-		else
-			appendStringInfoString(&buf,
-								   "  NULL, ");
-
-		if (import_collate)
-			appendStringInfoString(&buf,
-								   "  collname, "
-								   "  collnsp.nspname ");
-		else
-			appendStringInfoString(&buf,
-								   "  NULL, NULL ");
-
-		appendStringInfoString(&buf,
-							   "FROM pg_class c "
-							   "  JOIN pg_namespace n ON "
-							   "    relnamespace = n.oid "
-							   "  LEFT JOIN pg_attribute a ON "
-							   "    attrelid = c.oid AND attnum > 0 "
-							   "      AND NOT attisdropped "
-							   "  LEFT JOIN pg_attrdef ad ON "
-							   "    adrelid = c.oid AND adnum = attnum ");
-
-		if (import_collate)
-			appendStringInfoString(&buf,
-								   "  LEFT JOIN pg_collation coll ON "
-								   "    coll.oid = attcollation "
-								   "  LEFT JOIN pg_namespace collnsp ON "
-								   "    collnsp.oid = collnamespace ");
-
-		appendStringInfoString(&buf,
-							   "WHERE c.relkind IN ("
-							   CppAsString2(RELKIND_RELATION) ","
-							   CppAsString2(RELKIND_VIEW) ","
-							   CppAsString2(RELKIND_FOREIGN_TABLE) ","
-							   CppAsString2(RELKIND_MATVIEW) ","
-							   CppAsString2(RELKIND_PARTITIONED_TABLE) ") "
-							   "  AND n.nspname = ");
-		deparseStringLiteral(&buf, stmt->remote_schema);
-
-		/* Partitions are supported since MonetDB_ 10 */
-		if (PQserverVersion(conn) >= 100000 &&
-			stmt->list_type != FDW_IMPORT_SCHEMA_LIMIT_TO)
-			appendStringInfoString(&buf, " AND NOT c.relispartition ");
-
-		/* Apply restrictions for LIMIT TO and EXCEPT */
-		if (stmt->list_type == FDW_IMPORT_SCHEMA_LIMIT_TO ||
-			stmt->list_type == FDW_IMPORT_SCHEMA_EXCEPT)
-		{
-			bool		first_item = true;
-
-			appendStringInfoString(&buf, " AND c.relname ");
-			if (stmt->list_type == FDW_IMPORT_SCHEMA_EXCEPT)
-				appendStringInfoString(&buf, "NOT ");
-			appendStringInfoString(&buf, "IN (");
-
-			/* Append list of table names within IN clause */
-			foreach(lc, stmt->table_list)
-			{
-				RangeVar   *rv = (RangeVar *) lfirst(lc);
-
-				if (first_item)
-					first_item = false;
-				else
-					appendStringInfoString(&buf, ", ");
-				deparseStringLiteral(&buf, rv->relname);
-			}
-			appendStringInfoChar(&buf, ')');
-		}
-
-		/* Append ORDER BY at the end of query to ensure output ordering */
-		appendStringInfoString(&buf, " ORDER BY c.relname, a.attnum");
-
-		/* Fetch the data */
-		res = pgfdw_exec_query(conn, buf.data, NULL);
-		if (PQresultStatus(res) != PGRES_TUPLES_OK)
-			pgfdw_report_error(ERROR, res, conn, false, buf.data);
-
-		/* Process results */
-		numrows = PQntuples(res);
-		/* note: incrementation of i happens in inner loop's while() test */
-		for (i = 0; i < numrows;)
-		{
-			char	   *tablename = PQgetvalue(res, i, 0);
-			bool		first_item = true;
-
-			resetStringInfo(&buf);
-			appendStringInfo(&buf, "CREATE FOREIGN TABLE %s (\n",
-							 quote_identifier(tablename));
-
-			/* Scan all rows for this table */
-			do
-			{
-				char	   *attname;
-				char	   *typename;
-				char	   *attnotnull;
-				char	   *attgenerated;
-				char	   *attdefault;
-				char	   *collname;
-				char	   *collnamespace;
-
-				/* If table has no columns, we'll see nulls here */
-				if (PQgetisnull(res, i, 1))
-					continue;
-
-				attname = PQgetvalue(res, i, 1);
-				typename = PQgetvalue(res, i, 2);
-				attnotnull = PQgetvalue(res, i, 3);
-				attdefault = PQgetisnull(res, i, 4) ? (char *) NULL :
-					PQgetvalue(res, i, 4);
-				attgenerated = PQgetisnull(res, i, 5) ? (char *) NULL :
-					PQgetvalue(res, i, 5);
-				collname = PQgetisnull(res, i, 6) ? (char *) NULL :
-					PQgetvalue(res, i, 6);
-				collnamespace = PQgetisnull(res, i, 7) ? (char *) NULL :
-					PQgetvalue(res, i, 7);
-
-				if (first_item)
-					first_item = false;
-				else
-					appendStringInfoString(&buf, ",\n");
-
-				/* Print column name and type */
-				appendStringInfo(&buf, "  %s %s",
-								 quote_identifier(attname),
-								 typename);
-
-				/*
-				 * Add column_name option so that renaming the foreign table's
-				 * column doesn't break the association to the underlying
-				 * column.
-				 */
-				appendStringInfoString(&buf, " OPTIONS (column_name ");
-				deparseStringLiteral(&buf, attname);
-				appendStringInfoChar(&buf, ')');
-
-				/* Add COLLATE if needed */
-				if (import_collate && collname != NULL && collnamespace != NULL)
-					appendStringInfo(&buf, " COLLATE %s.%s",
-									 quote_identifier(collnamespace),
-									 quote_identifier(collname));
-
-				/* Add DEFAULT if needed */
-				if (import_default && attdefault != NULL &&
-					(!attgenerated || !attgenerated[0]))
-					appendStringInfo(&buf, " DEFAULT %s", attdefault);
-
-				/* Add GENERATED if needed */
-				if (import_generated && attgenerated != NULL &&
-					attgenerated[0] == ATTRIBUTE_GENERATED_STORED)
-				{
-					Assert(attdefault != NULL);
-					appendStringInfo(&buf,
-									 " GENERATED ALWAYS AS (%s) STORED",
-									 attdefault);
-				}
-
-				/* Add NOT NULL if needed */
-				if (import_not_null && attnotnull[0] == 't')
-					appendStringInfoString(&buf, " NOT NULL");
-			}
-			while (++i < numrows &&
-				   strcmp(PQgetvalue(res, i, 0), tablename) == 0);
-
-			/*
-			 * Add server name and table-level options.  We specify remote
-			 * schema and table name as options (the latter to ensure that
-			 * renaming the foreign table doesn't break the association).
-			 */
-			appendStringInfo(&buf, "\n) SERVER %s\nOPTIONS (",
-							 quote_identifier(server->servername));
-
-			appendStringInfoString(&buf, "schema_name ");
-			deparseStringLiteral(&buf, stmt->remote_schema);
-			appendStringInfoString(&buf, ", table_name ");
-			deparseStringLiteral(&buf, tablename);
-
-			appendStringInfoString(&buf, ");");
-
-			commands = lappend(commands, pstrdup(buf.data));
-		}
-	}
-	PG_FINALLY();
-	{
-		PQclear(res);
-	}
-	PG_END_TRY();
-
-	ReleaseConnection(conn);
-
-	return commands;
-}
-
-/*
- * Assess whether the join between inner and outer relations can be pushed down
- * to the foreign server. As a side effect, save information we obtain in this
- * function to PgFdwRelationInfo passed in.
- */
-static bool
-foreign_join_ok(PlannerInfo *root, RelOptInfo *joinrel, JoinType jointype,
-				RelOptInfo *outerrel, RelOptInfo *innerrel,
-				JoinPathExtraData *extra)
-{
-	PgFdwRelationInfo *fpinfo;
-	PgFdwRelationInfo *fpinfo_o;
-	PgFdwRelationInfo *fpinfo_i;
-	ListCell   *lc;
-	List	   *joinclauses;
-
-	/*
-	 * We support pushing down INNER, LEFT, RIGHT and FULL OUTER joins.
-	 * Constructing queries representing SEMI and ANTI joins is hard, hence
-	 * not considered right now.
-	 */
-	if (jointype != JOIN_INNER && jointype != JOIN_LEFT &&
-		jointype != JOIN_RIGHT && jointype != JOIN_FULL)
-		return false;
-
-	/*
-	 * If either of the joining relations is marked as unsafe to pushdown, the
-	 * join can not be pushed down.
-	 */
-	fpinfo = (PgFdwRelationInfo *) joinrel->fdw_private;
-	fpinfo_o = (PgFdwRelationInfo *) outerrel->fdw_private;
-	fpinfo_i = (PgFdwRelationInfo *) innerrel->fdw_private;
-	if (!fpinfo_o || !fpinfo_o->pushdown_safe ||
-		!fpinfo_i || !fpinfo_i->pushdown_safe)
-		return false;
-
-	/*
-	 * If joining relations have local conditions, those conditions are
-	 * required to be applied before joining the relations. Hence the join can
-	 * not be pushed down.
-	 */
-	if (fpinfo_o->local_conds || fpinfo_i->local_conds)
-		return false;
-
-	/*
-	 * Merge FDW options.  We might be tempted to do this after we have deemed
-	 * the foreign join to be OK.  But we must do this beforehand so that we
-	 * know which quals can be evaluated on the foreign server, which might
-	 * depend on shippable_extensions.
-	 */
-	fpinfo->server = fpinfo_o->server;
-	merge_fdw_options(fpinfo, fpinfo_o, fpinfo_i);
-
-	/*
-	 * Separate restrict list into join quals and pushed-down (other) quals.
-	 *
-	 * Join quals belonging to an outer join must all be shippable, else we
-	 * cannot execute the join remotely.  Add such quals to 'joinclauses'.
-	 *
-	 * Add other quals to fpinfo->remote_conds if they are shippable, else to
-	 * fpinfo->local_conds.  In an inner join it's okay to execute conditions
-	 * either locally or remotely; the same is true for pushed-down conditions
-	 * at an outer join.
-	 *
-	 * Note we might return failure after having already scribbled on
-	 * fpinfo->remote_conds and fpinfo->local_conds.  That's okay because we
-	 * won't consult those lists again if we deem the join unshippable.
-	 */
-	joinclauses = NIL;
-	foreach(lc, extra->restrictlist)
-	{
-		RestrictInfo *rinfo = lfirst_node(RestrictInfo, lc);
-		bool		is_remote_clause = is_foreign_expr(root, joinrel,
-													   rinfo->clause);
-
-		if (IS_OUTER_JOIN(jointype) &&
-			!RINFO_IS_PUSHED_DOWN(rinfo, joinrel->relids))
-		{
-			if (!is_remote_clause)
-				return false;
-			joinclauses = lappend(joinclauses, rinfo);
-		}
-		else
-		{
-			if (is_remote_clause)
-				fpinfo->remote_conds = lappend(fpinfo->remote_conds, rinfo);
-			else
-				fpinfo->local_conds = lappend(fpinfo->local_conds, rinfo);
-		}
-	}
-
-	/*
-	 * deparseExplicitTargetList() isn't smart enough to handle anything other
-	 * than a Var.  In particular, if there's some PlaceHolderVar that would
-	 * need to be evaluated within this join tree (because there's an upper
-	 * reference to a quantity that may go to NULL as a result of an outer
-	 * join), then we can't try to push the join down because we'll fail when
-	 * we get to deparseExplicitTargetList().  However, a PlaceHolderVar that
-	 * needs to be evaluated *at the top* of this join tree is OK, because we
-	 * can do that locally after fetching the results from the remote side.
-	 */
-	foreach(lc, root->placeholder_list)
-	{
-		PlaceHolderInfo *phinfo = lfirst(lc);
-		Relids		relids;
-
-		/* PlaceHolderInfo refers to parent relids, not child relids. */
-		relids = IS_OTHER_REL(joinrel) ?
-			joinrel->top_parent_relids : joinrel->relids;
-
-		if (bms_is_subset(phinfo->ph_eval_at, relids) &&
-			bms_nonempty_difference(relids, phinfo->ph_eval_at))
-			return false;
-	}
-
-	/* Save the join clauses, for later use. */
-	fpinfo->joinclauses = joinclauses;
-
-	fpinfo->outerrel = outerrel;
-	fpinfo->innerrel = innerrel;
-	fpinfo->jointype = jointype;
-
-	/*
-	 * By default, both the input relations are not required to be deparsed as
-	 * subqueries, but there might be some relations covered by the input
-	 * relations that are required to be deparsed as subqueries, so save the
-	 * relids of those relations for later use by the deparser.
-	 */
-	fpinfo->make_outerrel_subquery = false;
-	fpinfo->make_innerrel_subquery = false;
-	Assert(bms_is_subset(fpinfo_o->lower_subquery_rels, outerrel->relids));
-	Assert(bms_is_subset(fpinfo_i->lower_subquery_rels, innerrel->relids));
-	fpinfo->lower_subquery_rels = bms_union(fpinfo_o->lower_subquery_rels,
-											fpinfo_i->lower_subquery_rels);
-
-	/*
-	 * Pull the other remote conditions from the joining relations into join
-	 * clauses or other remote clauses (remote_conds) of this relation
-	 * wherever possible. This avoids building subqueries at every join step.
-	 *
-	 * For an inner join, clauses from both the relations are added to the
-	 * other remote clauses. For LEFT and RIGHT OUTER join, the clauses from
-	 * the outer side are added to remote_conds since those can be evaluated
-	 * after the join is evaluated. The clauses from inner side are added to
-	 * the joinclauses, since they need to be evaluated while constructing the
-	 * join.
-	 *
-	 * For a FULL OUTER JOIN, the other clauses from either relation can not
-	 * be added to the joinclauses or remote_conds, since each relation acts
-	 * as an outer relation for the other.
-	 *
-	 * The joining sides can not have local conditions, thus no need to test
-	 * shippability of the clauses being pulled up.
-	 */
-	switch (jointype)
-	{
-		case JOIN_INNER:
-			fpinfo->remote_conds = list_concat(fpinfo->remote_conds,
-											   fpinfo_i->remote_conds);
-			fpinfo->remote_conds = list_concat(fpinfo->remote_conds,
-											   fpinfo_o->remote_conds);
-			break;
-
-		case JOIN_LEFT:
-			fpinfo->joinclauses = list_concat(fpinfo->joinclauses,
-											  fpinfo_i->remote_conds);
-			fpinfo->remote_conds = list_concat(fpinfo->remote_conds,
-											   fpinfo_o->remote_conds);
-			break;
-
-		case JOIN_RIGHT:
-			fpinfo->joinclauses = list_concat(fpinfo->joinclauses,
-											  fpinfo_o->remote_conds);
-			fpinfo->remote_conds = list_concat(fpinfo->remote_conds,
-											   fpinfo_i->remote_conds);
-			break;
-
-		case JOIN_FULL:
-
-			/*
-			 * In this case, if any of the input relations has conditions, we
-			 * need to deparse that relation as a subquery so that the
-			 * conditions can be evaluated before the join.  Remember it in
-			 * the fpinfo of this relation so that the deparser can take
-			 * appropriate action.  Also, save the relids of base relations
-			 * covered by that relation for later use by the deparser.
-			 */
-			if (fpinfo_o->remote_conds)
-			{
-				fpinfo->make_outerrel_subquery = true;
-				fpinfo->lower_subquery_rels =
-					bms_add_members(fpinfo->lower_subquery_rels,
-									outerrel->relids);
-			}
-			if (fpinfo_i->remote_conds)
-			{
-				fpinfo->make_innerrel_subquery = true;
-				fpinfo->lower_subquery_rels =
-					bms_add_members(fpinfo->lower_subquery_rels,
-									innerrel->relids);
-			}
-			break;
-
-		default:
-			/* Should not happen, we have just checked this above */
-			elog(ERROR, "unsupported join type %d", jointype);
-	}
-
-	/*
-	 * For an inner join, all restrictions can be treated alike. Treating the
-	 * pushed down conditions as join conditions allows a top level full outer
-	 * join to be deparsed without requiring subqueries.
-	 */
-	if (jointype == JOIN_INNER)
-	{
-		Assert(!fpinfo->joinclauses);
-		fpinfo->joinclauses = fpinfo->remote_conds;
-		fpinfo->remote_conds = NIL;
-	}
-
-	/* Mark that this join can be pushed down safely */
-	fpinfo->pushdown_safe = true;
-
-	/* Get user mapping */
-	if (fpinfo->use_remote_estimate)
-	{
-		if (fpinfo_o->use_remote_estimate)
-			fpinfo->user = fpinfo_o->user;
-		else
-			fpinfo->user = fpinfo_i->user;
-	}
-	else
-		fpinfo->user = NULL;
-
-	/*
-	 * Set # of retrieved rows and cached relation costs to some negative
-	 * value, so that we can detect when they are set to some sensible values,
-	 * during one (usually the first) of the calls to estimate_path_cost_size.
-	 */
-	fpinfo->retrieved_rows = -1;
-	fpinfo->rel_startup_cost = -1;
-	fpinfo->rel_total_cost = -1;
-
-	/*
-	 * Set the string describing this join relation to be used in EXPLAIN
-	 * output of corresponding ForeignScan.  Note that the decoration we add
-	 * to the base relation names mustn't include any digits, or it'll confuse
-	 * MonetDB_ExplainForeignScan.
-	 */
-	fpinfo->relation_name = psprintf("(%s) %s JOIN (%s)",
-									 fpinfo_o->relation_name,
-									 get_jointype_name(fpinfo->jointype),
-									 fpinfo_i->relation_name);
-
-	/*
-	 * Set the relation index.  This is defined as the position of this
-	 * joinrel in the join_rel_list list plus the length of the rtable list.
-	 * Note that since this joinrel is at the end of the join_rel_list list
-	 * when we are called, we can get the position by list_length.
-	 */
-	Assert(fpinfo->relation_index == 0);	/* shouldn't be set yet */
-	fpinfo->relation_index =
-		list_length(root->parse->rtable) + list_length(root->join_rel_list);
-
-	return true;
+	elog(ERROR, "MonetDB_ImportForeignSchema not supported yet");
 }
 
 static void
@@ -6030,7 +2582,7 @@ add_paths_with_pathkeys_for_rel(PlannerInfo *root, RelOptInfo *rel,
 	 */
 	if (epq_path != NULL && useful_pathkeys_list != NIL)
 	{
-		PgFdwRelationInfo *fpinfo = (PgFdwRelationInfo *) rel->fdw_private;
+		MonetdbFdwRelationInfo *fpinfo = (MonetdbFdwRelationInfo *) rel->fdw_private;
 		PathTarget *target = copy_pathtarget(epq_path->pathtarget);
 
 		/* Include columns required for evaluating PHVs in the tlist. */
@@ -6126,44 +2678,12 @@ add_paths_with_pathkeys_for_rel(PlannerInfo *root, RelOptInfo *rel,
 }
 
 /*
- * Parse options from foreign server and apply them to fpinfo.
- *
- * New options might also require tweaking merge_fdw_options().
- */
-static void
-apply_server_options(PgFdwRelationInfo *fpinfo)
-{
-	ListCell   *lc;
-
-	foreach(lc, fpinfo->server->options)
-	{
-		DefElem    *def = (DefElem *) lfirst(lc);
-
-		if (strcmp(def->defname, "use_remote_estimate") == 0)
-			fpinfo->use_remote_estimate = defGetBoolean(def);
-		else if (strcmp(def->defname, "fdw_startup_cost") == 0)
-			(void) parse_real(defGetString(def), &fpinfo->fdw_startup_cost, 0,
-							  NULL);
-		else if (strcmp(def->defname, "fdw_tuple_cost") == 0)
-			(void) parse_real(defGetString(def), &fpinfo->fdw_tuple_cost, 0,
-							  NULL);
-		else if (strcmp(def->defname, "extensions") == 0)
-			fpinfo->shippable_extensions =
-				ExtractExtensionList(defGetString(def), false);
-		else if (strcmp(def->defname, "fetch_size") == 0)
-			(void) parse_int(defGetString(def), &fpinfo->fetch_size, 0, NULL);
-		else if (strcmp(def->defname, "async_capable") == 0)
-			fpinfo->async_capable = defGetBoolean(def);
-	}
-}
-
-/*
  * Parse options from foreign table and apply them to fpinfo.
  *
  * New options might also require tweaking merge_fdw_options().
  */
 static void
-apply_table_options(PgFdwRelationInfo *fpinfo)
+apply_table_options(MonetdbFdwRelationInfo *fpinfo)
 {
 	ListCell   *lc;
 
@@ -6190,9 +2710,9 @@ apply_table_options(PgFdwRelationInfo *fpinfo)
  * expected to NULL.
  */
 static void
-merge_fdw_options(PgFdwRelationInfo *fpinfo,
-				  const PgFdwRelationInfo *fpinfo_o,
-				  const PgFdwRelationInfo *fpinfo_i)
+merge_fdw_options(MonetdbFdwRelationInfo *fpinfo,
+				  const MonetdbFdwRelationInfo *fpinfo_o,
+				  const MonetdbFdwRelationInfo *fpinfo_i)
 {
 	/* We must always have fpinfo_o. */
 	Assert(fpinfo_o);
@@ -6258,145 +2778,22 @@ MonetDB_GetForeignJoinPaths(PlannerInfo *root,
 							JoinType jointype,
 							JoinPathExtraData *extra)
 {
-	PgFdwRelationInfo *fpinfo;
-	ForeignPath *joinpath;
-	double		rows;
-	int			width;
-	Cost		startup_cost;
-	Cost		total_cost;
-	Path	   *epq_path;		/* Path to create plan to be executed when
-								 * EvalPlanQual gets triggered. */
-
-	/*
-	 * Skip if this join combination has been considered already.
-	 */
-	if (joinrel->fdw_private)
-		return;
-
-	/*
-	 * This code does not work for joins with lateral references, since those
-	 * must have parameterized paths, which we don't generate yet.
-	 */
-	if (!bms_is_empty(joinrel->lateral_relids))
-		return;
-
-	/*
-	 * Create unfinished PgFdwRelationInfo entry which is used to indicate
-	 * that the join relation is already considered, so that we won't waste
-	 * time in judging safety of join pushdown and adding the same paths again
-	 * if found safe. Once we know that this join can be pushed down, we fill
-	 * the entry.
-	 */
-	fpinfo = (PgFdwRelationInfo *) palloc0(sizeof(PgFdwRelationInfo));
-	fpinfo->pushdown_safe = false;
-	joinrel->fdw_private = fpinfo;
-	/* attrs_used is only for base relations. */
-	fpinfo->attrs_used = NULL;
-
-	/*
-	 * If there is a possibility that EvalPlanQual will be executed, we need
-	 * to be able to reconstruct the row using scans of the base relations.
-	 * GetExistingLocalJoinPath will find a suitable path for this purpose in
-	 * the path list of the joinrel, if one exists.  We must be careful to
-	 * call it before adding any ForeignPath, since the ForeignPath might
-	 * dominate the only suitable local path available.  We also do it before
-	 * calling foreign_join_ok(), since that function updates fpinfo and marks
-	 * it as pushable if the join is found to be pushable.
-	 */
-	if (root->parse->commandType == CMD_DELETE ||
-		root->parse->commandType == CMD_UPDATE ||
-		root->rowMarks)
-	{
-		epq_path = GetExistingLocalJoinPath(joinrel);
-		if (!epq_path)
-		{
-			elog(DEBUG3, "could not push down foreign join because a local path suitable for EPQ checks was not found");
-			return;
-		}
-	}
-	else
-		epq_path = NULL;
-
-	if (!foreign_join_ok(root, joinrel, jointype, outerrel, innerrel, extra))
-	{
-		/* Free path required for EPQ if we copied one; we don't need it now */
-		if (epq_path)
-			pfree(epq_path);
-		return;
-	}
-
-	/*
-	 * Compute the selectivity and cost of the local_conds, so we don't have
-	 * to do it over again for each path. The best we can do for these
-	 * conditions is to estimate selectivity on the basis of local statistics.
-	 * The local conditions are applied after the join has been computed on
-	 * the remote side like quals in WHERE clause, so pass jointype as
-	 * JOIN_INNER.
-	 */
-	fpinfo->local_conds_sel = clauselist_selectivity(root,
-													 fpinfo->local_conds,
-													 0,
-													 JOIN_INNER,
-													 NULL);
-	cost_qual_eval(&fpinfo->local_conds_cost, fpinfo->local_conds, root);
-
-	/*
-	 * If we are going to estimate costs locally, estimate the join clause
-	 * selectivity here while we have special join info.
-	 */
-	if (!fpinfo->use_remote_estimate)
-		fpinfo->joinclause_sel = clauselist_selectivity(root, fpinfo->joinclauses,
-														0, fpinfo->jointype,
-														extra->sjinfo);
-
-	/* Estimate costs for bare join relation */
-	estimate_path_cost_size(root, joinrel, NIL, NIL, NULL,
-							&rows, &width, &startup_cost, &total_cost);
-	/* Now update this information in the joinrel */
-	joinrel->rows = rows;
-	joinrel->reltarget->width = width;
-	fpinfo->rows = rows;
-	fpinfo->width = width;
-	fpinfo->startup_cost = startup_cost;
-	fpinfo->total_cost = total_cost;
-
-	/*
-	 * Create a new join path and add it to the joinrel which represents a
-	 * join between foreign tables.
-	 */
-	joinpath = create_foreign_join_path(root,
-										joinrel,
-										NULL,	/* default pathtarget */
-										rows,
-										startup_cost,
-										total_cost,
-										NIL,	/* no pathkeys */
-										joinrel->lateral_relids,
-										epq_path,
-										NIL);	/* no fdw_private */
-
-	/* Add generated path into joinrel by add_path(). */
-	add_path(joinrel, (Path *) joinpath);
-
-	/* Consider pathkeys for the join relation */
-	add_paths_with_pathkeys_for_rel(root, joinrel, epq_path);
-
-	/* XXX Consider parameterized paths for the join relation */
+	elog(ERROR, "MonetDB_GetForeignJoinPaths not supported yet");
 }
 
 /*
  * Assess whether the aggregation, grouping and having operations can be pushed
  * down to the foreign server.  As a side effect, save information we obtain in
- * this function to PgFdwRelationInfo of the input relation.
+ * this function to MonetdbFdwRelationInfo of the input relation.
  */
 static bool
 foreign_grouping_ok(PlannerInfo *root, RelOptInfo *grouped_rel,
 					Node *havingQual)
 {
 	Query	   *query = root->parse;
-	PgFdwRelationInfo *fpinfo = (PgFdwRelationInfo *) grouped_rel->fdw_private;
+	MonetdbFdwRelationInfo *fpinfo = (MonetdbFdwRelationInfo *) grouped_rel->fdw_private;
 	PathTarget *grouping_target = grouped_rel->reltarget;
-	PgFdwRelationInfo *ofpinfo;
+	MonetdbFdwRelationInfo *ofpinfo;
 	ListCell   *lc;
 	int			i;
 	List	   *tlist = NIL;
@@ -6406,7 +2803,7 @@ foreign_grouping_ok(PlannerInfo *root, RelOptInfo *grouped_rel,
 		return false;
 
 	/* Get the fpinfo of the underlying scan relation. */
-	ofpinfo = (PgFdwRelationInfo *) fpinfo->outerrel->fdw_private;
+	ofpinfo = (MonetdbFdwRelationInfo *) fpinfo->outerrel->fdw_private;
 
 	/*
 	 * If underlying scan relation has any local conditions, those conditions
@@ -6634,14 +3031,14 @@ MonetDB_GetForeignUpperPaths(PlannerInfo *root, UpperRelationKind stage,
 							 RelOptInfo *input_rel, RelOptInfo *output_rel,
 							 void *extra)
 {
-	PgFdwRelationInfo *fpinfo;
+	MonetdbFdwRelationInfo *fpinfo;
 
 	/*
 	 * If input rel is not safe to pushdown, then simply return as we cannot
 	 * perform any post-join operations on the foreign server.
 	 */
 	if (!input_rel->fdw_private ||
-		!((PgFdwRelationInfo *) input_rel->fdw_private)->pushdown_safe)
+		!((MonetdbFdwRelationInfo *) input_rel->fdw_private)->pushdown_safe)
 		return;
 
 	/* Ignore stages we don't support; and skip any duplicate calls. */
@@ -6651,7 +3048,7 @@ MonetDB_GetForeignUpperPaths(PlannerInfo *root, UpperRelationKind stage,
 		output_rel->fdw_private)
 		return;
 
-	fpinfo = (PgFdwRelationInfo *) palloc0(sizeof(PgFdwRelationInfo));
+	fpinfo = (MonetdbFdwRelationInfo *) palloc0(sizeof(MonetdbFdwRelationInfo));
 	fpinfo->pushdown_safe = false;
 	fpinfo->stage = stage;
 	output_rel->fdw_private = fpinfo;
@@ -6688,8 +3085,8 @@ add_foreign_grouping_paths(PlannerInfo *root, RelOptInfo *input_rel,
 						   GroupPathExtraData *extra)
 {
 	Query	   *parse = root->parse;
-	PgFdwRelationInfo *ifpinfo = input_rel->fdw_private;
-	PgFdwRelationInfo *fpinfo = grouped_rel->fdw_private;
+	MonetdbFdwRelationInfo *ifpinfo = input_rel->fdw_private;
+	MonetdbFdwRelationInfo *fpinfo = grouped_rel->fdw_private;
 	ForeignPath *grouppath;
 	double		rows;
 	int			width;
@@ -6778,9 +3175,9 @@ add_foreign_ordered_paths(PlannerInfo *root, RelOptInfo *input_rel,
 						  RelOptInfo *ordered_rel)
 {
 	Query	   *parse = root->parse;
-	PgFdwRelationInfo *ifpinfo = input_rel->fdw_private;
-	PgFdwRelationInfo *fpinfo = ordered_rel->fdw_private;
-	PgFdwPathExtraData *fpextra;
+	MonetdbFdwRelationInfo *ifpinfo = input_rel->fdw_private;
+	MonetdbFdwRelationInfo *fpinfo = ordered_rel->fdw_private;
+	MonetdbFdwPathExtraData *fpextra;
 	double		rows;
 	int			width;
 	Cost		startup_cost;
@@ -6869,8 +3266,8 @@ add_foreign_ordered_paths(PlannerInfo *root, RelOptInfo *input_rel,
 	/* Safe to push down */
 	fpinfo->pushdown_safe = true;
 
-	/* Construct PgFdwPathExtraData */
-	fpextra = (PgFdwPathExtraData *) palloc0(sizeof(PgFdwPathExtraData));
+	/* Construct MonetdbFdwPathExtraData */
+	fpextra = (MonetdbFdwPathExtraData *) palloc0(sizeof(MonetdbFdwPathExtraData));
 	fpextra->target = root->upper_targets[UPPERREL_ORDERED];
 	fpextra->has_final_sort = true;
 
@@ -6912,11 +3309,11 @@ add_foreign_final_paths(PlannerInfo *root, RelOptInfo *input_rel,
 						FinalPathExtraData *extra)
 {
 	Query	   *parse = root->parse;
-	PgFdwRelationInfo *ifpinfo = (PgFdwRelationInfo *) input_rel->fdw_private;
-	PgFdwRelationInfo *fpinfo = (PgFdwRelationInfo *) final_rel->fdw_private;
+	MonetdbFdwRelationInfo *ifpinfo = (MonetdbFdwRelationInfo *) input_rel->fdw_private;
+	MonetdbFdwRelationInfo *fpinfo = (MonetdbFdwRelationInfo *) final_rel->fdw_private;
 	bool		has_final_sort = false;
 	List	   *pathkeys = NIL;
-	PgFdwPathExtraData *fpextra;
+	MonetdbFdwPathExtraData *fpextra;
 	bool		save_use_remote_estimate = false;
 	double		rows;
 	int			width;
@@ -7038,7 +3435,7 @@ add_foreign_final_paths(PlannerInfo *root, RelOptInfo *input_rel,
 		ifpinfo->stage == UPPERREL_ORDERED)
 	{
 		input_rel = ifpinfo->outerrel;
-		ifpinfo = (PgFdwRelationInfo *) input_rel->fdw_private;
+		ifpinfo = (MonetdbFdwRelationInfo *) input_rel->fdw_private;
 		has_final_sort = true;
 		pathkeys = root->sort_pathkeys;
 	}
@@ -7095,8 +3492,8 @@ add_foreign_final_paths(PlannerInfo *root, RelOptInfo *input_rel,
 	/* Safe to push down */
 	fpinfo->pushdown_safe = true;
 
-	/* Construct PgFdwPathExtraData */
-	fpextra = (PgFdwPathExtraData *) palloc0(sizeof(PgFdwPathExtraData));
+	/* Construct MonetdbFdwPathExtraData */
+	fpextra = (MonetdbFdwPathExtraData *) palloc0(sizeof(MonetdbFdwPathExtraData));
 	fpextra->target = root->upper_targets[UPPERREL_FINAL];
 	fpextra->has_final_sort = has_final_sort;
 	fpextra->has_limit = extra->limit_needed;
@@ -7155,10 +3552,7 @@ add_foreign_final_paths(PlannerInfo *root, RelOptInfo *input_rel,
 static bool
 MonetDB_IsForeignPathAsyncCapable(ForeignPath *path)
 {
-	RelOptInfo *rel = ((Path *) path)->parent;
-	PgFdwRelationInfo *fpinfo = (PgFdwRelationInfo *) rel->fdw_private;
-
-	return fpinfo->async_capable;
+	elog(ERROR, "MonetDB_IsForeignPathAsyncCapable not supported yet");
 }
 
 /*
@@ -7168,7 +3562,7 @@ MonetDB_IsForeignPathAsyncCapable(ForeignPath *path)
 static void
 MonetDB_ForeignAsyncRequest(AsyncRequest *areq)
 {
-	produce_tuple_asynchronously(areq, true);
+	elog(ERROR, "MonetDB_ForeignAsyncRequest not supported yet");
 }
 
 /*
@@ -7178,73 +3572,7 @@ MonetDB_ForeignAsyncRequest(AsyncRequest *areq)
 static void
 MonetDB_ForeignAsyncConfigureWait(AsyncRequest *areq)
 {
-	ForeignScanState *node = (ForeignScanState *) areq->requestee;
-	MonetdbFdwScanState *fsstate = (MonetdbFdwScanState *) node->fdw_state;
-	AsyncRequest *pendingAreq = fsstate->conn_state->pendingAreq;
-	AppendState *requestor = (AppendState *) areq->requestor;
-	WaitEventSet *set = requestor->as_eventset;
-
-	/* This should not be called unless callback_pending */
-	Assert(areq->callback_pending);
-
-	/*
-	 * If process_pending_request() has been invoked on the given request
-	 * before we get here, we might have some tuples already; in which case
-	 * complete the request
-	 */
-	if (fsstate->next_tuple < fsstate->num_tuples)
-	{
-		complete_pending_request(areq);
-		if (areq->request_complete)
-			return;
-		Assert(areq->callback_pending);
-	}
-
-	/* We must have run out of tuples */
-	Assert(fsstate->next_tuple >= fsstate->num_tuples);
-
-	/* The core code would have registered postmaster death event */
-	Assert(GetNumRegisteredWaitEvents(set) >= 1);
-
-	/* Begin an asynchronous data fetch if not already done */
-	if (!pendingAreq)
-		fetch_more_data_begin(areq);
-	else if (pendingAreq->requestor != areq->requestor)
-	{
-		/*
-		 * This is the case when the in-process request was made by another
-		 * Append.  Note that it might be useless to process the request made
-		 * by that Append, because the query might not need tuples from that
-		 * Append anymore; so we avoid processing it to begin a fetch for the
-		 * given request if possible.  If there are any child subplans of the
-		 * same parent that are ready for new requests, skip the given
-		 * request.  Likewise, if there are any configured events other than
-		 * the postmaster death event, skip it.  Otherwise, process the
-		 * in-process request, then begin a fetch to configure the event
-		 * below, because we might otherwise end up with no configured events
-		 * other than the postmaster death event.
-		 */
-		if (!bms_is_empty(requestor->as_needrequest))
-			return;
-		if (GetNumRegisteredWaitEvents(set) > 1)
-			return;
-		process_pending_request(pendingAreq);
-		fetch_more_data_begin(areq);
-	}
-	else if (pendingAreq->requestee != areq->requestee)
-	{
-		/*
-		 * This is the case when the in-process request was made by the same
-		 * parent but for a different child.  Since we configure only the
-		 * event for the request made for that child, skip the given request.
-		 */
-		return;
-	}
-	else
-		Assert(pendingAreq == areq);
-
-	AddWaitEventToSet(set, WL_SOCKET_READABLE, PQsocket(fsstate->conn),
-					  NULL, areq);
+	elog(ERROR, "MonetDB_ForeignAsyncConfigureWait not supported yet");
 }
 
 /*
@@ -7255,192 +3583,9 @@ MonetDB_ForeignAsyncConfigureWait(AsyncRequest *areq)
 static void
 MonetDB_ForeignAsyncNotify(AsyncRequest *areq)
 {
-	ForeignScanState *node = (ForeignScanState *) areq->requestee;
-	MonetdbFdwScanState *fsstate = (MonetdbFdwScanState *) node->fdw_state;
-
-	/* The core code would have initialized the callback_pending flag */
-	Assert(!areq->callback_pending);
-
-	/*
-	 * If process_pending_request() has been invoked on the given request
-	 * before we get here, we might have some tuples already; in which case
-	 * produce the next tuple
-	 */
-	if (fsstate->next_tuple < fsstate->num_tuples)
-	{
-		produce_tuple_asynchronously(areq, true);
-		return;
-	}
-
-	/* We must have run out of tuples */
-	Assert(fsstate->next_tuple >= fsstate->num_tuples);
-
-	/* The request should be currently in-process */
-	Assert(fsstate->conn_state->pendingAreq == areq);
-
-	/* On error, report the original query, not the FETCH. */
-	if (!PQconsumeInput(fsstate->conn))
-		pgfdw_report_error(ERROR, NULL, fsstate->conn, false, fsstate->query);
-
-	fetch_more_data(node);
-
-	produce_tuple_asynchronously(areq, true);
+	elog(ERROR, "MonetDB_ForeignAsyncNotify not supported yet");
 }
 
-/*
- * Asynchronously produce next tuple from a foreign MonetDB_QL table.
- */
-static void
-produce_tuple_asynchronously(AsyncRequest *areq, bool fetch)
-{
-	ForeignScanState *node = (ForeignScanState *) areq->requestee;
-	MonetdbFdwScanState *fsstate = (MonetdbFdwScanState *) node->fdw_state;
-	AsyncRequest *pendingAreq = fsstate->conn_state->pendingAreq;
-	TupleTableSlot *result;
-
-	/* This should not be called if the request is currently in-process */
-	Assert(areq != pendingAreq);
-
-	/* Fetch some more tuples, if we've run out */
-	if (fsstate->next_tuple >= fsstate->num_tuples)
-	{
-		/* No point in another fetch if we already detected EOF, though */
-		if (!fsstate->eof_reached)
-		{
-			/* Mark the request as pending for a callback */
-			ExecAsyncRequestPending(areq);
-			/* Begin another fetch if requested and if no pending request */
-			if (fetch && !pendingAreq)
-				fetch_more_data_begin(areq);
-		}
-		else
-		{
-			/* There's nothing more to do; just return a NULL pointer */
-			result = NULL;
-			/* Mark the request as complete */
-			ExecAsyncRequestDone(areq, result);
-		}
-		return;
-	}
-
-	/* Get a tuple from the ForeignScan node */
-	result = areq->requestee->ExecProcNodeReal(areq->requestee);
-	if (!TupIsNull(result))
-	{
-		/* Mark the request as complete */
-		ExecAsyncRequestDone(areq, result);
-		return;
-	}
-
-	/* We must have run out of tuples */
-	Assert(fsstate->next_tuple >= fsstate->num_tuples);
-
-	/* Fetch some more tuples, if we've not detected EOF yet */
-	if (!fsstate->eof_reached)
-	{
-		/* Mark the request as pending for a callback */
-		ExecAsyncRequestPending(areq);
-		/* Begin another fetch if requested and if no pending request */
-		if (fetch && !pendingAreq)
-			fetch_more_data_begin(areq);
-	}
-	else
-	{
-		/* There's nothing more to do; just return a NULL pointer */
-		result = NULL;
-		/* Mark the request as complete */
-		ExecAsyncRequestDone(areq, result);
-	}
-}
-
-/*
- * Begin an asynchronous data fetch.
- *
- * Note: this function assumes there is no currently-in-progress asynchronous
- * data fetch.
- *
- * Note: fetch_more_data must be called to fetch the result.
- */
-static void
-fetch_more_data_begin(AsyncRequest *areq)
-{
-	ForeignScanState *node = (ForeignScanState *) areq->requestee;
-	MonetdbFdwScanState *fsstate = (MonetdbFdwScanState *) node->fdw_state;
-	char		sql[64];
-
-	Assert(!fsstate->conn_state->pendingAreq);
-
-	/* Create the cursor synchronously. */
-	if (!fsstate->cursor_exists)
-		create_cursor(node);
-
-	/* We will send this query, but not wait for the response. */
-	snprintf(sql, sizeof(sql), "FETCH %d FROM c%u",
-			 fsstate->fetch_size, fsstate->cursor_number);
-
-	if (!PQsendQuery(fsstate->conn, sql))
-		pgfdw_report_error(ERROR, NULL, fsstate->conn, false, fsstate->query);
-
-	/* Remember that the request is in process */
-	fsstate->conn_state->pendingAreq = areq;
-}
-
-/*
- * Process a pending asynchronous request.
- */
-void
-process_pending_request(AsyncRequest *areq)
-{
-	ForeignScanState *node = (ForeignScanState *) areq->requestee;
-	MonetdbFdwScanState *fsstate = (MonetdbFdwScanState *) node->fdw_state;
-
-	/* The request would have been pending for a callback */
-	Assert(areq->callback_pending);
-
-	/* The request should be currently in-process */
-	Assert(fsstate->conn_state->pendingAreq == areq);
-
-	fetch_more_data(node);
-
-	/*
-	 * If we didn't get any tuples, must be end of data; complete the request
-	 * now.  Otherwise, we postpone completing the request until we are called
-	 * from MonetDB_ForeignAsyncConfigureWait()/MonetDB_ForeignAsyncNotify().
-	 */
-	if (fsstate->next_tuple >= fsstate->num_tuples)
-	{
-		/* Unlike AsyncNotify, we unset callback_pending ourselves */
-		areq->callback_pending = false;
-		/* Mark the request as complete */
-		ExecAsyncRequestDone(areq, NULL);
-		/* Unlike AsyncNotify, we call ExecAsyncResponse ourselves */
-		ExecAsyncResponse(areq);
-	}
-}
-
-/*
- * Complete a pending asynchronous request.
- */
-static void
-complete_pending_request(AsyncRequest *areq)
-{
-	/* The request would have been pending for a callback */
-	Assert(areq->callback_pending);
-
-	/* Unlike AsyncNotify, we unset callback_pending ourselves */
-	areq->callback_pending = false;
-
-	/* We begin a fetch afterwards if necessary; don't fetch */
-	produce_tuple_asynchronously(areq, false);
-
-	/* Unlike AsyncNotify, we call ExecAsyncResponse ourselves */
-	ExecAsyncResponse(areq);
-
-	/* Also, we do instrumentation ourselves, if required */
-	if (areq->requestee->instrument)
-		InstrUpdateTupleCount(areq->requestee->instrument,
-							  TupIsNull(areq->result) ? 0.0 : 1.0);
-}
 
 /*
  * Create a tuple from the specified row of the PGresult.
@@ -7808,46 +3953,4 @@ find_em_for_rel_target(PlannerInfo *root, EquivalenceClass *ec,
 	}
 
 	return NULL;
-}
-
-/*
- * Determine batch size for a given foreign table. The option specified for
- * a table has precedence.
- */
-static int
-get_batch_size_option(Relation rel)
-{
-	Oid			foreigntableid = RelationGetRelid(rel);
-	ForeignTable *table;
-	ForeignServer *server;
-	List	   *options;
-	ListCell   *lc;
-
-	/* we use 1 by default, which means "no batching" */
-	int			batch_size = 1;
-
-	/*
-	 * Load options for table and server. We append server options after table
-	 * options, because table options take precedence.
-	 */
-	table = GetForeignTable(foreigntableid);
-	server = GetForeignServer(table->serverid);
-
-	options = NIL;
-	options = list_concat(options, table->options);
-	options = list_concat(options, server->options);
-
-	/* See if either table or server specifies batch_size. */
-	foreach(lc, options)
-	{
-		DefElem    *def = (DefElem *) lfirst(lc);
-
-		if (strcmp(def->defname, "batch_size") == 0)
-		{
-			(void) parse_int(defGetString(def), &batch_size, 0, NULL);
-			break;
-		}
-	}
-
-	return batch_size;
 }

@@ -15,7 +15,6 @@
 
 #include "foreign/foreign.h"
 #include "lib/stringinfo.h"
-#include "libpq-fe.h"
 #include "nodes/execnodes.h"
 #include "nodes/pathnodes.h"
 #include "utils/relcache.h"
@@ -27,7 +26,7 @@
  * postgresGetForeignJoinPaths creates it for a joinrel, and
  * postgresGetForeignUpperPaths creates it for an upperrel.
  */
-typedef struct PgFdwRelationInfo
+typedef struct MonetdbFdwRelationInfo
 {
 	/*
 	 * True means that the relation can be pushed down. Always true for simple
@@ -124,54 +123,11 @@ typedef struct PgFdwRelationInfo
 	 * representing the relation.
 	 */
 	int			relation_index;
-} PgFdwRelationInfo;
+} MonetdbFdwRelationInfo;
 
-/*
- * Extra control information relating to a connection.
- */
-typedef struct PgFdwConnState
-{
-	AsyncRequest *pendingAreq;	/* pending async request */
-} PgFdwConnState;
-
-/*
- * Method used by ANALYZE to sample remote rows.
- */
-typedef enum PgFdwSamplingMethod
-{
-	ANALYZE_SAMPLE_OFF,			/* no remote sampling */
-	ANALYZE_SAMPLE_AUTO,		/* choose by server version */
-	ANALYZE_SAMPLE_RANDOM,		/* remote random() */
-	ANALYZE_SAMPLE_SYSTEM,		/* TABLESAMPLE system */
-	ANALYZE_SAMPLE_BERNOULLI	/* TABLESAMPLE bernoulli */
-} PgFdwSamplingMethod;
-
-/* in postgres_fdw.c */
+/* in monetdb_fdw.c */
 extern int	set_transmission_modes(void);
 extern void reset_transmission_modes(int nestlevel);
-extern void process_pending_request(AsyncRequest *areq);
-
-/* in connection.c */
-extern PGconn *GetConnection(UserMapping *user, bool will_prep_stmt,
-							 PgFdwConnState **state);
-extern void ReleaseConnection(PGconn *conn);
-extern unsigned int GetCursorNumber(PGconn *conn);
-extern unsigned int GetPrepStmtNumber(PGconn *conn);
-extern void do_sql_command(PGconn *conn, const char *sql);
-extern PGresult *pgfdw_get_result(PGconn *conn, const char *query);
-extern PGresult *pgfdw_exec_query(PGconn *conn, const char *query,
-								  PgFdwConnState *state);
-extern void pgfdw_report_error(int elevel, PGresult *res, PGconn *conn,
-							   bool clear, const char *sql);
-
-/* in option.c */
-extern int	ExtractConnectionOptions(List *defelems,
-									 const char **keywords,
-									 const char **values);
-extern List *ExtractExtensionList(const char *extensionsString,
-								  bool warnOnMissing);
-extern char *process_pgfdw_appname(const char *appname);
-extern char *pgfdw_application_name;
 
 /* in deparse.c */
 extern void classifyConditions(PlannerInfo *root,
@@ -224,10 +180,6 @@ extern void deparseDirectDeleteSql(StringInfo buf, PlannerInfo *root,
 								   List **retrieved_attrs);
 extern void deparseAnalyzeSizeSql(StringInfo buf, Relation rel);
 extern void deparseAnalyzeInfoSql(StringInfo buf, Relation rel);
-extern void deparseAnalyzeSql(StringInfo buf, Relation rel,
-							  PgFdwSamplingMethod sample_method,
-							  double sample_frac,
-							  List **retrieved_attrs);
 extern void deparseTruncateSql(StringInfo buf,
 							   List *rels,
 							   DropBehavior behavior,
@@ -250,6 +202,6 @@ extern const char *get_jointype_name(JoinType jointype);
 
 /* in shippable.c */
 extern bool is_builtin(Oid objectId);
-extern bool is_shippable(Oid objectId, Oid classId, PgFdwRelationInfo *fpinfo);
+extern bool is_shippable(Oid objectId, Oid classId, MonetdbFdwRelationInfo *fpinfo);
 
 #endif							/* POSTGRES_FDW_H */
