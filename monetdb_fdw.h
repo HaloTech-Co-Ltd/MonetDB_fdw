@@ -6,12 +6,12 @@
  * Portions Copyright (c) 2012-2023, PostgreSQL Global Development Group
  *
  * IDENTIFICATION
- *		  contrib/postgres_fdw/monetdb_fdw.h
+ *		  contrib/monetdb_fdw/monetdb_fdw.h
  *
  *-------------------------------------------------------------------------
  */
-#ifndef POSTGRES_FDW_H
-#define POSTGRES_FDW_H
+#ifndef MONETDB_FDW_H
+#define MONETDB_FDW_H
 
 #include "foreign/foreign.h"
 #include "lib/stringinfo.h"
@@ -41,10 +41,10 @@
 
 /*
  * FDW-specific planner information kept in RelOptInfo.fdw_private for a
- * postgres_fdw foreign table.  For a baserel, this struct is created by
- * postgresGetForeignRelSize, although some fields are not filled till later.
- * postgresGetForeignJoinPaths creates it for a joinrel, and
- * postgresGetForeignUpperPaths creates it for an upperrel.
+ * monetdb_fdw foreign table.  For a baserel, this struct is created by
+ * MonetDB_GetForeignRelSize, although some fields are not filled till later.
+ * MonetDB_GetForeignJoinPaths creates it for a joinrel, and
+ * MonetDB_GetForeignUpperPaths creates it for an upperrel.
  */
 typedef struct MonetdbFdwRelationInfo
 {
@@ -224,4 +224,4 @@ extern const char *get_jointype_name(JoinType jointype);
 extern bool is_builtin(Oid objectId);
 extern bool is_shippable(Oid objectId, Oid classId, MonetdbFdwRelationInfo *fpinfo);
 
-#endif							/* POSTGRES_FDW_H */
+#endif							/* MONETDB_FDW_H */

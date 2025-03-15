@@ -2041,7 +2041,7 @@ MonetDB_IsForeignRelUpdatable(Relation rel)
 	ListCell   *lc;
 
 	/*
-	 * By default, all postgres_fdw foreign tables are assumed updatable. This
+	 * By default, all monetdb_fdw foreign tables are assumed updatable. This
 	 * can be overridden by a per-server setting, which in turn can be
 	 * overridden by a per-table setting.
 	 */
@@ -4444,7 +4444,7 @@ static MonetdbFdwModifyState *create_foreign_modify(EState *estate,
 
 	/* Create context for per-tuple temp workspace. */
 	fmstate->temp_cxt = AllocSetContextCreate(estate->es_query_cxt,
-											  "postgres_fdw temporary data",
+											  "monetdb_fdw temporary data",
 											  ALLOCSET_SMALL_SIZES);
 
 	/* Prepare for input conversion of RETURNING results. */
