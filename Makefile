@@ -10,8 +10,8 @@ OBJS = \
 	shippable.o
 PGFILEDESC = "monetdb_fdw - foreign data wrapper for MonetDB"
 
-PG_CPPFLAGS = -I$(libpq_srcdir)
-SHLIB_LINK_INTERNAL = $(libpq)
+PG_CPPFLAGS = -I"$(MONETDB_HOME)/include/monetdb/" -I$(libpq_srcdir)
+SHLIB_LINK_INTERNAL = -L"$(MONETDB_HOME)/" -L"$(MONETDB_HOME)/lib64/" -lmapi-11.54.0 $(libpq)
 
 EXTENSION = monetdb_fdw
 DATA = monetdb_fdw--1.0.sql

@@ -3,7 +3,7 @@
  * monetdb_fdw.c
  *		  Foreign-data wrapper for remote MonetDB servers
  *
- * Portions Copyright (c) 2012-2023, MonetDB Global Development Group
+ * Portions Copyright (c) 2012-2023, PostgreSQL Global Development Group
  *
  * IDENTIFICATION
  *		  contrib/monetdb_fdw/monetdb_fdw.c
@@ -12,6 +12,7 @@
  */
 #include "postgres.h"
 
+#include <mapi.h>
 #include <limits.h>
 
 #include "access/htup_details.h"
@@ -52,6 +53,16 @@
 #include "utils/selfuncs.h"
 
 PG_MODULE_MAGIC;
+
+#define die(dbh,hdl)	do {						\
+				if (hdl)				\
+					mapi_explain_result(hdl,stderr); \
+				else if (dbh)				\
+					mapi_explain(dbh,stderr);	\
+				else					\
+					fprintf(stderr,"command failed\n"); \
+				exit(-1);				\
+			} while (0)
 
 /* Default CPU cost to start up a foreign query. */
 #define DEFAULT_FDW_STARTUP_COST	100.0
@@ -135,7 +146,7 @@ enum FdwDirectModifyPrivateIndex
 /*
  * Execution state of a foreign scan using monetdb_fdw.
  */
-typedef struct PgFdwScanState
+typedef struct MonetdbFdwScanState
 {
 	Relation	rel;			/* relcache entry for the foreign table. NULL
 								 * for a foreign join scan. */
@@ -147,7 +158,8 @@ typedef struct PgFdwScanState
 	List	   *retrieved_attrs;	/* list of retrieved attribute numbers */
 
 	/* for remote query execution */
-	PGconn	   *conn;			/* connection for the scan */
+	Mapi 	   conn;			/* connection for the scan */
+	MapiHdl 	hdl;
 	PgFdwConnState *conn_state; /* extra per-connection state */
 	unsigned int cursor_number; /* quasi-unique ID for my cursor */
 	bool		cursor_exists;	/* have we created the cursor? */
@@ -173,7 +185,7 @@ typedef struct PgFdwScanState
 	MemoryContext temp_cxt;		/* context for per-tuple temporary data */
 
 	int			fetch_size;		/* number of tuples per fetch */
-} PgFdwScanState;
+} MonetdbFdwScanState;
 
 /*
  * Execution state of a foreign insert/update/delete operation.
@@ -507,7 +519,7 @@ static void analyze_row_processor(PGresult *res, int row,
 static void produce_tuple_asynchronously(AsyncRequest *areq, bool fetch);
 static void fetch_more_data_begin(AsyncRequest *areq);
 static void complete_pending_request(AsyncRequest *areq);
-static HeapTuple make_tuple_from_result_row(PGresult *res,
+static HeapTuple make_tuple_from_result_row(MapiHdl res,
 											int row,
 											Relation rel,
 											AttInMetadata *attinmeta,
@@ -1489,13 +1501,21 @@ MonetDB_BeginForeignScan(ForeignScanState *node, int eflags)
 {
 	ForeignScan *fsplan = (ForeignScan *) node->ss.ps.plan;
 	EState	   *estate = node->ss.ps.state;
-	PgFdwScanState *fsstate;
+	MonetdbFdwScanState *fsstate;
 	RangeTblEntry *rte;
 	Oid			userid;
 	ForeignTable *table;
 	UserMapping *user;
 	int			rtindex;
 	int			numParams;
+	char 		*host = NULL;        
+	char 		*port = NULL;         
+	char 		*user_str = NULL;          
+	char 		*password = NULL;         
+	char 		*dbname = NULL;
+	List	   	*options = NIL;
+	ListCell  	*cell = NULL;
+	ForeignServer *server = NULL;
 
 	/*
 	 * Do nothing in EXPLAIN (no ANALYZE) case.  node->fdw_state stays NULL.
@@ -1506,7 +1526,7 @@ MonetDB_BeginForeignScan(ForeignScanState *node, int eflags)
 	/*
 	 * We'll save private state in node->fdw_state.
 	 */
-	fsstate = (PgFdwScanState *) palloc0(sizeof(PgFdwScanState));
+	fsstate = (MonetdbFdwScanState *) palloc0(sizeof(MonetdbFdwScanState));
 	node->fdw_state = (void *) fsstate;
 
 	/*
@@ -1523,12 +1543,33 @@ MonetDB_BeginForeignScan(ForeignScanState *node, int eflags)
 	/* Get info about foreign table. */
 	table = GetForeignTable(rte->relid);
 	user = GetUserMapping(userid, table->serverid);
+	server = GetForeignServer(table->serverid);
+	options = list_concat(options, server->options);
+	options = list_concat(options, user->options);
 
+	foreach(cell, options)
+	{
+		DefElem    *def = (DefElem *) lfirst(cell);
+
+		if (strcmp(def->defname, "host") == 0)
+			host = defGetString(def);
+		else if (strcmp(def->defname, "port") == 0)
+			port = defGetString(def);
+		else if (strcmp(def->defname, "user") == 0)
+			user_str = defGetString(def);
+		else if (strcmp(def->defname, "password") == 0)
+			password = defGetString(def);
+		else if (strcmp(def->defname, "dbname") == 0)
+			dbname = defGetString(def);
+	}
+	list_free(options);
+	
+	elog(DEBUG2, "monetdb: host %s port %s user %s password %s dbname %s", host, port, user_str, password, dbname);
 	/*
 	 * Get connection to the foreign server.  Connection manager will
 	 * establish new connection if necessary.
 	 */
-	fsstate->conn = GetConnection(user, false, &fsstate->conn_state);
+	fsstate->conn = mapi_connect(host, atoi(port), user_str, password, "sql", dbname);
 
 	/* Assign a unique ID for my cursor */
 	fsstate->cursor_number = GetCursorNumber(fsstate->conn);
@@ -1592,20 +1633,25 @@ MonetDB_BeginForeignScan(ForeignScanState *node, int eflags)
 static TupleTableSlot *
 MonetDB_IterateForeignScan(ForeignScanState *node)
 {
-	PgFdwScanState *fsstate = (PgFdwScanState *) node->fdw_state;
+	MonetdbFdwScanState *fsstate = (MonetdbFdwScanState *) node->fdw_state;
 	TupleTableSlot *slot = node->ss.ss_ScanTupleSlot;
 
-	/*
-	 * In sync mode, if this is the first call after Begin or ReScan, we need
-	 * to create the cursor on the remote side.  In async mode, we would have
-	 * already created the cursor before we get here, even if this is the
-	 * first call after Begin or ReScan.
-	 */
-	if (!fsstate->cursor_exists)
-		create_cursor(node);
+	if (!fsstate->hdl)
+	{
+		/* Submit a query and wait for the result. */
+		if ((fsstate->hdl = mapi_query(fsstate->conn, fsstate->query)) == NULL ||
+			mapi_error(fsstate->conn) != MOK)
+		{
+			if (mapi_error(fsstate->conn))
+				die(fsstate->conn, fsstate->hdl);
+			if (mapi_close_handle(fsstate->hdl) != MOK)
+				die(fsstate->conn, fsstate->hdl);
+			mapi_destroy(fsstate->conn);
+		}
+	}
 
 	/*
-	 * Get some more tuples, if we've run out.
+	 * Get some more tuples.
 	 */
 	if (fsstate->next_tuple >= fsstate->num_tuples)
 	{
@@ -1637,7 +1683,7 @@ MonetDB_IterateForeignScan(ForeignScanState *node)
 static void
 MonetDB_ReScanForeignScan(ForeignScanState *node)
 {
-	PgFdwScanState *fsstate = (PgFdwScanState *) node->fdw_state;
+	MonetdbFdwScanState *fsstate = (MonetdbFdwScanState *) node->fdw_state;
 	char		sql[64];
 	PGresult   *res;
 
@@ -1715,7 +1761,7 @@ MonetDB_ReScanForeignScan(ForeignScanState *node)
 static void
 MonetDB_EndForeignScan(ForeignScanState *node)
 {
-	PgFdwScanState *fsstate = (PgFdwScanState *) node->fdw_state;
+	MonetdbFdwScanState *fsstate = (MonetdbFdwScanState *) node->fdw_state;
 
 	/* if fsstate is NULL, we are in EXPLAIN; nothing to do */
 	if (fsstate == NULL)
@@ -3714,7 +3760,7 @@ ec_member_matches_foreign(PlannerInfo *root, RelOptInfo *rel,
 static void
 create_cursor(ForeignScanState *node)
 {
-	PgFdwScanState *fsstate = (PgFdwScanState *) node->fdw_state;
+	MonetdbFdwScanState *fsstate = (MonetdbFdwScanState *) node->fdw_state;
 	ExprContext *econtext = node->ss.ps.ps_ExprContext;
 	int			numParams = fsstate->numParams;
 	const char **values = fsstate->param_values;
@@ -3790,7 +3836,7 @@ create_cursor(ForeignScanState *node)
 static void
 fetch_more_data(ForeignScanState *node)
 {
-	PgFdwScanState *fsstate = (PgFdwScanState *) node->fdw_state;
+	MonetdbFdwScanState *fsstate = (MonetdbFdwScanState *) node->fdw_state;
 	PGresult   *volatile res = NULL;
 	MemoryContext oldcontext;
 
@@ -3805,42 +3851,11 @@ fetch_more_data(ForeignScanState *node)
 	/* PGresult must be released before leaving this function. */
 	PG_TRY();
 	{
-		PGconn	   *conn = fsstate->conn;
 		int			numrows;
 		int			i;
 
-		if (fsstate->async_capable)
-		{
-			Assert(fsstate->conn_state->pendingAreq);
-
-			/*
-			 * The query was already sent by an earlier call to
-			 * fetch_more_data_begin.  So now we just fetch the result.
-			 */
-			res = pgfdw_get_result(conn, fsstate->query);
-			/* On error, report the original query, not the FETCH. */
-			if (PQresultStatus(res) != PGRES_TUPLES_OK)
-				pgfdw_report_error(ERROR, res, conn, false, fsstate->query);
-
-			/* Reset per-connection state */
-			fsstate->conn_state->pendingAreq = NULL;
-		}
-		else
-		{
-			char		sql[64];
-
-			/* This is a regular synchronous fetch. */
-			snprintf(sql, sizeof(sql), "FETCH %d FROM c%u",
-					 fsstate->fetch_size, fsstate->cursor_number);
-
-			res = pgfdw_exec_query(conn, sql, fsstate->conn_state);
-			/* On error, report the original query, not the FETCH. */
-			if (PQresultStatus(res) != PGRES_TUPLES_OK)
-				pgfdw_report_error(ERROR, res, conn, false, fsstate->query);
-		}
-
 		/* Convert the data into HeapTuples */
-		numrows = PQntuples(res);
+		numrows = mapi_get_row_count(fsstate->hdl);
 		fsstate->tuples = (HeapTuple *) palloc0(numrows * sizeof(HeapTuple));
 		fsstate->num_tuples = numrows;
 		fsstate->next_tuple = 0;
@@ -3850,7 +3865,7 @@ fetch_more_data(ForeignScanState *node)
 			Assert(IsA(node->ss.ps.plan, ForeignScan));
 
 			fsstate->tuples[i] =
-				make_tuple_from_result_row(res, i,
+				make_tuple_from_result_row(fsstate->hdl, i,
 										   fsstate->rel,
 										   fsstate->attinmeta,
 										   fsstate->retrieved_attrs,
@@ -7164,7 +7179,7 @@ static void
 MonetDB_ForeignAsyncConfigureWait(AsyncRequest *areq)
 {
 	ForeignScanState *node = (ForeignScanState *) areq->requestee;
-	PgFdwScanState *fsstate = (PgFdwScanState *) node->fdw_state;
+	MonetdbFdwScanState *fsstate = (MonetdbFdwScanState *) node->fdw_state;
 	AsyncRequest *pendingAreq = fsstate->conn_state->pendingAreq;
 	AppendState *requestor = (AppendState *) areq->requestor;
 	WaitEventSet *set = requestor->as_eventset;
@@ -7241,7 +7256,7 @@ static void
 MonetDB_ForeignAsyncNotify(AsyncRequest *areq)
 {
 	ForeignScanState *node = (ForeignScanState *) areq->requestee;
-	PgFdwScanState *fsstate = (PgFdwScanState *) node->fdw_state;
+	MonetdbFdwScanState *fsstate = (MonetdbFdwScanState *) node->fdw_state;
 
 	/* The core code would have initialized the callback_pending flag */
 	Assert(!areq->callback_pending);
@@ -7279,7 +7294,7 @@ static void
 produce_tuple_asynchronously(AsyncRequest *areq, bool fetch)
 {
 	ForeignScanState *node = (ForeignScanState *) areq->requestee;
-	PgFdwScanState *fsstate = (PgFdwScanState *) node->fdw_state;
+	MonetdbFdwScanState *fsstate = (MonetdbFdwScanState *) node->fdw_state;
 	AsyncRequest *pendingAreq = fsstate->conn_state->pendingAreq;
 	TupleTableSlot *result;
 
@@ -7350,7 +7365,7 @@ static void
 fetch_more_data_begin(AsyncRequest *areq)
 {
 	ForeignScanState *node = (ForeignScanState *) areq->requestee;
-	PgFdwScanState *fsstate = (PgFdwScanState *) node->fdw_state;
+	MonetdbFdwScanState *fsstate = (MonetdbFdwScanState *) node->fdw_state;
 	char		sql[64];
 
 	Assert(!fsstate->conn_state->pendingAreq);
@@ -7377,7 +7392,7 @@ void
 process_pending_request(AsyncRequest *areq)
 {
 	ForeignScanState *node = (ForeignScanState *) areq->requestee;
-	PgFdwScanState *fsstate = (PgFdwScanState *) node->fdw_state;
+	MonetdbFdwScanState *fsstate = (MonetdbFdwScanState *) node->fdw_state;
 
 	/* The request would have been pending for a callback */
 	Assert(areq->callback_pending);
@@ -7441,7 +7456,7 @@ complete_pending_request(AsyncRequest *areq)
  * context such as ANALYZE, or if we're processing a non-scan query node.
  */
 static HeapTuple
-make_tuple_from_result_row(PGresult *res,
+make_tuple_from_result_row(MapiHdl res,
 						   int row,
 						   Relation rel,
 						   AttInMetadata *attinmeta,
@@ -7460,7 +7475,7 @@ make_tuple_from_result_row(PGresult *res,
 	ListCell   *lc;
 	int			j;
 
-	Assert(row < PQntuples(res));
+	Assert(row < mapi_get_row_count(res));
 
 	/*
 	 * Do the following work in a temp context that we reset after each tuple.
@@ -7497,52 +7512,53 @@ make_tuple_from_result_row(PGresult *res,
 	errcallback.previous = error_context_stack;
 	error_context_stack = &errcallback;
 
-	/*
-	 * i indexes columns in the relation, j indexes columns in the PGresult.
-	 */
-	j = 0;
-	foreach(lc, retrieved_attrs)
+	/* fetch next row */
+	if (mapi_fetch_row(res))
 	{
-		int			i = lfirst_int(lc);
-		char	   *valstr;
-
-		/* fetch next column's textual value */
-		if (PQgetisnull(res, row, j))
-			valstr = NULL;
-		else
-			valstr = PQgetvalue(res, row, j);
-
 		/*
-		 * convert value to internal representation
-		 *
-		 * Note: we ignore system columns other than ctid and oid in result
+		 * i indexes columns in the relation, j indexes columns in the PGresult.
 		 */
-		errpos.cur_attno = i;
-		if (i > 0)
+		j = 0;
+		foreach(lc, retrieved_attrs)
 		{
-			/* ordinary column */
-			Assert(i <= tupdesc->natts);
-			nulls[i - 1] = (valstr == NULL);
-			/* Apply the input function even to nulls, to support domains */
-			values[i - 1] = InputFunctionCall(&attinmeta->attinfuncs[i - 1],
-											  valstr,
-											  attinmeta->attioparams[i - 1],
-											  attinmeta->atttypmods[i - 1]);
-		}
-		else if (i == SelfItemPointerAttributeNumber)
-		{
-			/* ctid */
-			if (valstr != NULL)
+			int			i = lfirst_int(lc);
+			char	   *valstr;
+
+			/* fetch next column's textual value */
+			valstr = mapi_fetch_field(res, j);
+
+			/*
+			 * convert value to internal representation
+			 *
+			 * Note: we ignore system columns other than ctid and oid in result
+			 */
+			errpos.cur_attno = i;
+			if (i > 0)
 			{
-				Datum		datum;
-
-				datum = DirectFunctionCall1(tidin, CStringGetDatum(valstr));
-				ctid = (ItemPointer) DatumGetPointer(datum);
+				/* ordinary column */
+				Assert(i <= tupdesc->natts);
+				nulls[i - 1] = (valstr == NULL);
+				/* Apply the input function even to nulls, to support domains */
+				values[i - 1] = InputFunctionCall(&attinmeta->attinfuncs[i - 1],
+												  valstr,
+												  attinmeta->attioparams[i - 1],
+												  attinmeta->atttypmods[i - 1]);
 			}
-		}
-		errpos.cur_attno = 0;
+			else if (i == SelfItemPointerAttributeNumber)
+			{
+				/* ctid */
+				if (valstr != NULL)
+				{
+					Datum		datum;
 
-		j++;
+					datum = DirectFunctionCall1(tidin, CStringGetDatum(valstr));
+					ctid = (ItemPointer) DatumGetPointer(datum);
+				}
+			}
+			errpos.cur_attno = 0;
+
+			j++;
+		}
 	}
 
 	/* Uninstall error context callback. */
@@ -7552,7 +7568,7 @@ make_tuple_from_result_row(PGresult *res,
 	 * Check we got the expected number of columns.  Note: j == 0 and
 	 * PQnfields == 1 is expected, since deparse emits a NULL if no columns.
 	 */
-	if (j > 0 && j != PQnfields(res))
+	if (j > 0 && j != mapi_get_field_count(res))
 		elog(ERROR, "remote query result does not match the foreign table");
 
 	/*
