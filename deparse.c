@@ -1,7 +1,7 @@
 /*-------------------------------------------------------------------------
  *
  * deparse.c
- *		  Query deparser for postgres_fdw
+ *		  Query deparser for monetdb_fdw
  *
  * This file includes functions that examine query WHERE clauses to see
  * whether they're safe to send to the remote server for execution, as
@@ -25,9 +25,10 @@
  * consider to be user error.
  *
  * Portions Copyright (c) 2012-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 2025, zengman
  *
  * IDENTIFICATION
- *		  contrib/postgres_fdw/deparse.c
+ *		  contrib/monetdb_fdw/deparse.c
  *
  *-------------------------------------------------------------------------
  */

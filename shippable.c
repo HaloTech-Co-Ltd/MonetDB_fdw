@@ -14,9 +14,10 @@
  * need not be accounted for here.
  *
  * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 2025, zengman
  *
  * IDENTIFICATION
- *	  contrib/postgres_fdw/shippable.c
+ *	  contrib/monetdb_fdw/shippable.c
  *
  *-------------------------------------------------------------------------
  */

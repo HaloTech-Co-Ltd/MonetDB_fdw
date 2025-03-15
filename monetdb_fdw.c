@@ -4,6 +4,7 @@
  *		  Foreign-data wrapper for remote MonetDB servers
  *
  * Portions Copyright (c) 2012-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 2025, zengman
  *
  * IDENTIFICATION
  *		  contrib/monetdb_fdw/monetdb_fdw.c
