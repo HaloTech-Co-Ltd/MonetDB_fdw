@@ -1352,12 +1352,6 @@ MonetDB_BeginForeignScan(ForeignScanState *node, int eflags)
 	ForeignServer *server = NULL;
 
 	/*
-	 * Do nothing in EXPLAIN (no ANALYZE) case.  node->fdw_state stays NULL.
-	 */
-	if (eflags & EXEC_FLAG_EXPLAIN_ONLY)
-		return;
-
-	/*
 	 * We'll save private state in node->fdw_state.
 	 */
 	fsstate = (MonetdbFdwScanState *) palloc0(sizeof(MonetdbFdwScanState));
@@ -1754,7 +1748,16 @@ MonetDB_EndDirectModify(ForeignScanState *node)
 static void
 MonetDB_ExplainForeignScan(ForeignScanState *node, ExplainState *es)
 {
-	elog(ERROR, "MonetDB_ExplainForeignScan not supported yet");
+	MonetdbFdwScanState *fsstate = (MonetdbFdwScanState *) node->fdw_state;
+
+	/* show query */
+	ExplainPropertyText("MonetDB query", fsstate->query, es);
+	if ((fsstate->hdl = mapi_query(fsstate->conn, psprintf("plan %s", fsstate->query))) == NULL || mapi_error(fsstate->conn))
+		die(fsstate->conn, fsstate->hdl);
+	/* show plan */
+	while (mapi_fetch_row(fsstate->hdl)) {
+		ExplainPropertyText("MonetDB plan", mapi_fetch_field(fsstate->hdl, 0), es);
+	}
 }
 
 /*
