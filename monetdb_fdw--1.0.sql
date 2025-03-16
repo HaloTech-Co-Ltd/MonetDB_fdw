@@ -8,11 +8,12 @@ RETURNS fdw_handler
 AS 'MODULE_PATHNAME'
 LANGUAGE C STRICT;
 
-CREATE FUNCTION monetdb_fdw_validator(text[], oid)
-RETURNS void
+CREATE FOREIGN DATA WRAPPER monetdb_fdw
+  HANDLER monetdb_fdw_handler;
+
+CREATE FUNCTION monetdb_execute(server name, statement text) RETURNS void
 AS 'MODULE_PATHNAME'
 LANGUAGE C STRICT;
 
-CREATE FOREIGN DATA WRAPPER monetdb_fdw
-  HANDLER monetdb_fdw_handler
-  VALIDATOR monetdb_fdw_validator;
+COMMENT ON FUNCTION monetdb_execute(name, text)
+IS 'executes an arbitrary SQL statement with no results on the MonetDB server';

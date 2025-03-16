@@ -21,6 +21,7 @@
 #include "access/table.h"
 #include "catalog/pg_class.h"
 #include "catalog/pg_opfamily.h"
+#include "catalog/pg_foreign_server.h"
 #include "commands/defrem.h"
 #include "commands/explain.h"
 #include "commands/vacuum.h"
@@ -52,6 +53,7 @@
 #include "utils/rel.h"
 #include "utils/sampling.h"
 #include "utils/selfuncs.h"
+#include "utils/syscache.h"
 
 PG_MODULE_MAGIC;
 
@@ -269,6 +271,7 @@ typedef struct
  * SQL functions
  */
 PG_FUNCTION_INFO_V1(monetdb_fdw_handler);
+PG_FUNCTION_INFO_V1(monetdb_execute);
 
 /*
  * FDW callback routines
@@ -4741,4 +4744,99 @@ replaceDollarNumbers(const char *input)
 
     result = (char *) repalloc(result, (j + 1) * sizeof(char));
     return (const char *) result;
+}
+
+/*
+ * monetdb_execute
+ * 		Execute a statement that returns no result values on a foreign server.
+ */
+PGDLLEXPORT Datum
+monetdb_execute(PG_FUNCTION_ARGS)
+{
+	Name 		srvname = PG_GETARG_NAME(0);
+	char 		*stmt   = text_to_cstring(PG_GETARG_TEXT_PP(1));
+	Oid 		srvId = InvalidOid;
+	int 		fields = 0;
+	char 		*line = NULL;
+	Mapi 	   	conn;
+	MapiHdl 	hdl;
+	UserMapping *user = NULL;
+	char 		*host = NULL;        
+	char 		*port = NULL;         
+	char 		*user_str = NULL;          
+	char 		*password = NULL;         
+	char 		*dbname = NULL;
+	List	   	*options = NIL;
+	ListCell  	*cell = NULL;
+	ForeignServer *server = NULL;
+	StringInfoData msg;
+
+	HeapTuple tup = SearchSysCacheCopy1(FOREIGNSERVERNAME, NameGetDatum(srvname));
+	if (!HeapTupleIsValid(tup))
+		ereport(ERROR,
+			(errcode(ERRCODE_UNDEFINED_OBJECT),
+			errmsg("server \"%s\" does not exist", NameStr(*srvname))));
+
+	srvId = ((Form_pg_foreign_server)GETSTRUCT(tup))->oid;
+	user = GetUserMapping(GetUserId(), srvId);
+	server = GetForeignServer(srvId);
+	options = list_concat(options, server->options);
+	options = list_concat(options, user->options);
+
+	foreach(cell, options)
+	{
+		DefElem    *def = (DefElem *) lfirst(cell);
+
+		if (strcmp(def->defname, "host") == 0)
+			host = defGetString(def);
+		else if (strcmp(def->defname, "port") == 0)
+			port = defGetString(def);
+		else if (strcmp(def->defname, "user") == 0)
+			user_str = defGetString(def);
+		else if (strcmp(def->defname, "password") == 0)
+			password = defGetString(def);
+		else if (strcmp(def->defname, "dbname") == 0)
+			dbname = defGetString(def);
+	}
+	list_free(options);
+	
+	elog(DEBUG2, "monetdb: host %s port %s user %s password %s dbname %s", host, port, user_str, password, dbname);
+	conn = mapi_connect(host, atoi(port), user_str, password, "sql", dbname);
+	if ((hdl = mapi_query(conn, stmt)) == NULL || mapi_error(conn))
+		die(conn, hdl);
+
+	initStringInfo(&msg);
+	/* build field_name */
+	fields = mapi_get_field_count(hdl);
+	for (int i = 0; i < fields; i++)
+	{
+		char *field_name = mapi_get_name(hdl, i);
+		if (i == (fields - 1))
+			appendStringInfo(&msg, "%s\n", field_name);
+		else
+			appendStringInfo(&msg, "%s,", field_name);
+	}
+
+	/* data */
+	while((line = mapi_fetch_line(hdl)) != NULL)
+	{
+		if (*line != '%')
+			appendStringInfo(&msg, "%s\n",  line);
+	}
+
+	/* If there are data returned, let's output these data. */
+	if (msg.data)
+	{
+		elog(INFO, "\n%s", msg.data);
+		pfree(msg.data);
+	}
+
+	/* clear */
+	heap_freetuple(tup);
+	if (mapi_error(conn))
+		die(conn, hdl);
+	if (mapi_close_handle(hdl) != MOK)
+		die(conn, hdl);
+	mapi_destroy(conn);
+	PG_RETURN_VOID();
 }
