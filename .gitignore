@@ -2,3 +2,5 @@
 /.deps/
 /*.o
 /*.so
+/log/
+/results/
