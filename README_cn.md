@@ -51,5 +51,4 @@ OPTIONS (schema_name 'zm', table_name 'emp');
 
 #### 限制
 
-MonetDB_fdw暂时仅支持SELECT、INSERT和EXPLAIN语句。
-
+MonetDB_fdw暂时仅支持SELECT、INSERT、TRUNCATE和EXPLAIN语句。

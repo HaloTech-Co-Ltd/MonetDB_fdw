@@ -57,13 +57,14 @@
 
 PG_MODULE_MAGIC;
 
-#define die(dbh,hdl)	do {						\
-				if (hdl)				\
-					mapi_explain_result(hdl,stderr); \
-				else if (dbh)				\
-					mapi_explain(dbh,stderr);	\
-				else					\
-					elog(ERROR, "command failed\n"); \
+#define die(dbh,hdl)											\
+			do {												\
+				if (hdl)										\
+					elog(ERROR, "%s", mapi_result_error(hdl)); 	\
+				else if (dbh)									\
+					elog(ERROR, "%s", mapi_error_str(dbh));		\
+				else											\
+					elog(ERROR, "command failed\n"); 			\
 			} while (0)
 
 /* Default CPU cost to start up a foreign query. */
@@ -2195,7 +2196,128 @@ MonetDB_ExecForeignTruncate(List *rels,
 							DropBehavior behavior,
 							bool restart_seqs)
 {
-	elog(ERROR, "MonetDB_ExecForeignTruncate not supported yet");
+	Oid			serverid = InvalidOid;
+	StringInfoData sql;
+	ListCell   *lc;
+	bool		server_truncatable = true;
+	Mapi 	   	conn;
+	MapiHdl 	hdl;
+	UserMapping *user = NULL;
+	char 		*host = NULL;        
+	char 		*port = NULL;         
+	char 		*user_str = NULL;          
+	char 		*password = NULL;         
+	char 		*dbname = NULL;
+	List	   	*options = NIL;
+	ForeignServer *fserver = NULL;
+
+	/*
+	 * By default, all monetdb_fdw foreign tables are assumed truncatable.
+	 * This can be overridden by a per-server setting, which in turn can be
+	 * overridden by a per-table setting.
+	 */
+	foreach(lc, rels)
+	{
+		ForeignServer *server = NULL;
+		Relation	rel = lfirst(lc);
+		ForeignTable *table = GetForeignTable(RelationGetRelid(rel));
+		ListCell   *cell;
+		bool		truncatable;
+
+		/*
+		 * First time through, determine whether the foreign server allows
+		 * truncates. Since all specified foreign tables are assumed to belong
+		 * to the same foreign server, this result can be used for other
+		 * foreign tables.
+		 */
+		if (!OidIsValid(serverid))
+		{
+			serverid = table->serverid;
+			server = GetForeignServer(serverid);
+
+			foreach(cell, server->options)
+			{
+				DefElem    *defel = (DefElem *) lfirst(cell);
+
+				if (strcmp(defel->defname, "truncatable") == 0)
+				{
+					server_truncatable = defGetBoolean(defel);
+					break;
+				}
+			}
+		}
+
+		/*
+		 * Confirm that all specified foreign tables belong to the same
+		 * foreign server.
+		 */
+		Assert(table->serverid == serverid);
+
+		/* Determine whether this foreign table allows truncations */
+		truncatable = server_truncatable;
+		foreach(cell, table->options)
+		{
+			DefElem    *defel = (DefElem *) lfirst(cell);
+
+			if (strcmp(defel->defname, "truncatable") == 0)
+			{
+				truncatable = defGetBoolean(defel);
+				break;
+			}
+		}
+
+		if (!truncatable)
+			ereport(ERROR,
+					(errcode(ERRCODE_OBJECT_NOT_IN_PREREQUISITE_STATE),
+					 errmsg("foreign table \"%s\" does not allow truncates",
+							RelationGetRelationName(rel))));
+	}
+	Assert(OidIsValid(serverid));
+
+	/*
+	 * Get connection to the foreign server.  Connection manager will
+	 * establish new connection if necessary.
+	 */
+	user = GetUserMapping(GetUserId(), serverid);
+	fserver = GetForeignServer(serverid);
+	options = list_concat(options, fserver->options);
+	options = list_concat(options, user->options);
+
+	foreach(lc, options)
+	{
+		DefElem    *def = (DefElem *) lfirst(lc);
+
+		if (strcmp(def->defname, "host") == 0)
+			host = defGetString(def);
+		else if (strcmp(def->defname, "port") == 0)
+			port = defGetString(def);
+		else if (strcmp(def->defname, "user") == 0)
+			user_str = defGetString(def);
+		else if (strcmp(def->defname, "password") == 0)
+			password = defGetString(def);
+		else if (strcmp(def->defname, "dbname") == 0)
+			dbname = defGetString(def);
+	}
+	list_free(options);
+	
+	elog(DEBUG2, "monetdb: host %s port %s user %s password %s dbname %s", host, port, user_str, password, dbname);
+	/* Construct the TRUNCATE command string */
+	initStringInfo(&sql);
+	deparseTruncateSql(&sql, rels, behavior, restart_seqs);
+
+	/* Issue the TRUNCATE command to remote server */
+	conn = mapi_connect(host, atoi(port), user_str, password, "sql", dbname);
+	if ((hdl = mapi_query(conn, sql.data)) == NULL || mapi_error(conn))
+		die(conn, hdl);
+
+	pfree(sql.data);
+
+	/* clear */
+	if (mapi_error(conn))
+		die(conn, hdl);
+	if (mapi_close_handle(hdl) != MOK)
+		die(conn, hdl);
+	mapi_destroy(conn);
 }
 
 /*
