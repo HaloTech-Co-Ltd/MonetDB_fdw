@@ -1,0 +1,91 @@
+-- !!! If you want to run regression tests, you need to create a database named "test" in MonetDB with the default port 50000.
+CREATE EXTENSION monetdb_fdw;
+CREATE SERVER foreign_server FOREIGN DATA WRAPPER monetdb_fdw
+OPTIONS (host '127.0.0.1', port '50000', dbname 'test');
+CREATE USER MAPPING FOR CURRENT_USER SERVER foreign_server OPTIONS (user 'monetdb', password 'monetdb');
+SELECT monetdb_execute('foreign_server', $$CREATE USER "test_u" WITH PASSWORD 'test_u' NAME 'test_user' SCHEMA "sys"$$);
+ monetdb_execute 
+-----------------
+ 
+(1 row)
+
+SELECT monetdb_execute('foreign_server', $$CREATE SCHEMA "test_u" AUTHORIZATION "test_u"$$);
+ monetdb_execute 
+-----------------
+ 
+(1 row)
+
+SELECT monetdb_execute('foreign_server', $$ALTER USER "test_u" SET SCHEMA "test_u"$$);
+ monetdb_execute 
+-----------------
+ 
+(1 row)
+
+DROP USER MAPPING FOR CURRENT_USER SERVER foreign_server;
+CREATE USER MAPPING FOR CURRENT_USER SERVER foreign_server OPTIONS (user 'test_u', password 'test_u');
+SELECT monetdb_execute('foreign_server', $$CREATE TABLE emp( name VARCHAR(20), age INTEGER)$$);
+ monetdb_execute 
+-----------------
+ 
+(1 row)
+
+CREATE FOREIGN TABLE emp(
+        name VARCHAR(20),
+        age INTEGER
+)
+SERVER foreign_server
+OPTIONS (schema_name 'test_u', table_name 'emp');
+\des
+             List of foreign servers
+      Name      |  Owner   | Foreign-data wrapper 
+----------------+----------+----------------------
+ foreign_server | postgres | monetdb_fdw
+(1 row)
+
+\d+ emp
+                                              Foreign table "public.emp"
+ Column |         Type          | Collation | Nullable | Default | FDW options | Storage  | Stats target | Description 
+--------+-----------------------+-----------+----------+---------+-------------+----------+--------------+-------------
+ name   | character varying(20) |           |          |         |             | extended |              | 
+ age    | integer               |           |          |         |             | plain    |              | 
+Server: foreign_server
+FDW options: (schema_name 'test_u', table_name 'emp')
+
+-- test insert 
+INSERT INTO emp VALUES('John', 23);
+INSERT INTO emp VALUES('Mary', 22);
+-- test selectt
+SELECT * FROM emp;
+ name | age 
+------+-----
+ John |  23
+ Mary |  22
+(2 rows)
+
+SELECT monetdb_execute('foreign_server', $$SELECT * FROM emp$$);
+INFO:  
+name,age
+[ "John",	23	]
+[ "Mary",	22	]
+
+ monetdb_execute 
+-----------------
+ 
+(1 row)
+
+-- test explain
+-- EXPLAIN (COSTS OFF) SELECT * FROM emp;
+EXPLAIN (COSTS OFF) INSERT INTO emp VALUES('Mary test', 21);
+                               QUERY PLAN                               
+------------------------------------------------------------------------
+ Insert on emp
+   MonetDB statement: INSERT INTO test_u.emp(name, age) VALUES ($1, $2)
+   ->  Result
+(3 rows)
+
+SELECT monetdb_execute('foreign_server', $$drop table emp$$);
+ monetdb_execute 
+-----------------
+ 
+(1 row)
+

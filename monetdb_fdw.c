@@ -2877,7 +2877,7 @@ set_transmission_modes(void)
 								 PGC_USERSET, PGC_S_SESSION,
 								 GUC_ACTION_SAVE, true, 0, false);
 	if (IntervalStyle != INTSTYLE_POSTGRES)
-		(void) set_config_option("intervalstyle", "MonetDB",
+		(void) set_config_option("intervalstyle", "postgres",
 								 PGC_USERSET, PGC_S_SESSION,
 								 GUC_ACTION_SAVE, true, 0, false);
 	if (extra_float_digits < 3)
@@ -4811,10 +4811,13 @@ monetdb_execute(PG_FUNCTION_ARGS)
 	for (int i = 0; i < fields; i++)
 	{
 		char *field_name = mapi_get_name(hdl, i);
-		if (i == (fields - 1))
-			appendStringInfo(&msg, "%s\n", field_name);
-		else
-			appendStringInfo(&msg, "%s,", field_name);
+		if (field_name)
+		{
+			if (i == (fields - 1))
+				appendStringInfo(&msg, "%s\n", field_name);
+			else
+				appendStringInfo(&msg, "%s,", field_name);
+		}
 	}
 
 	/* data */
@@ -4825,7 +4828,7 @@ monetdb_execute(PG_FUNCTION_ARGS)
 	}
 
 	/* If there are data returned, let's output these data. */
-	if (msg.data)
+	if (msg.len)
 	{
 		elog(INFO, "\n%s", msg.data);
 		pfree(msg.data);

@@ -6,7 +6,7 @@
 
 #### 编译和运行环境
 
-* 项目支持``Linux``操作系统（其余系统待测试）。
+* 项目支持 ``Linux``操作系统（其余系统待测试）。
 * 项目需要本地安装部署了MonetDB，需要设置环境变量MONETDB_HOME、PATH和LD_LIBRARY_PATH。
   ```sh
   # 可以考虑将这几行放入.bash_profile
@@ -17,11 +17,17 @@
 
 #### 快速开始（Linux）：
 
-~~~sh
+```sh
 git clone https://github.com/Leo-XM-Zeng/MonetDB_fdw.git
 cd MonetDB_fdw
 make && make install
-~~~
+```
+
+#### 回归测试
+
+如果您想要运行回归测试，这需要您在MonetDB创建一个名为test的数据库，IP：127.0.0.1 端口50000
+
+相关测试内容详见[monetdb_fdw.sql](./sql/monetdb_fdw.sql)
 
 #### 一个简单的示例
 
@@ -46,3 +52,4 @@ OPTIONS (schema_name 'zm', table_name 'emp');
 #### 限制
 
 MonetDB_fdw暂时仅支持SELECT、INSERT和EXPLAIN语句。
+

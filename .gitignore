@@ -4,3 +4,6 @@
 /*.so
 /log/
 /results/
+/tmp_check/
+/regression.diffs
+/regression.out
