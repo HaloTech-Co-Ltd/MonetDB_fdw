@@ -2,8 +2,8 @@
 
 MODULE_big = monetdb_fdw
 OBJS = \
-	$(WIN32RES) \
-	deparse.o \
+	$(WIN32RES)   \
+	deparse.o 	  \
 	monetdb_fdw.o \
 	shippable.o
 PGFILEDESC = "monetdb_fdw - foreign data wrapper for MonetDB"
@@ -21,7 +21,6 @@ PG_CONFIG = pg_config
 PGXS := $(shell $(PG_CONFIG) --pgxs)
 include $(PGXS)
 else
-SHLIB_PREREQS = submake-libpq
 subdir = contrib/monetdb_fdw
 top_builddir = ../..
 include $(top_builddir)/src/Makefile.global
