@@ -347,13 +347,12 @@ foreign_expr_walker(Node *node,
 					/* Var belongs to foreign table */
 
 					/*
-					 * System columns other than ctid should not be sent to
-					 * the remote, since we don't make any effort to ensure
+					 * System columns should not be sent to the remote, 
+					 * since we don't make any effort to ensure
 					 * that local and remote values match (tableoid, in
 					 * particular, almost certainly doesn't match).
 					 */
-					if (var->varattno < 0 &&
-						var->varattno != SelfItemPointerAttributeNumber)
+					if (var->varattno < 0)
 						return false;
 
 					/* Else check the collation */
@@ -1446,27 +1445,6 @@ deparseTargetList(StringInfo buf,
 		}
 	}
 
-	/*
-	 * Add ctid if needed.  We currently don't support retrieving any other
-	 * system columns.
-	 */
-	if (bms_is_member(SelfItemPointerAttributeNumber - FirstLowInvalidHeapAttributeNumber,
-					  attrs_used))
-	{
-		if (!first)
-			appendStringInfoString(buf, ", ");
-		else if (is_returning)
-			appendStringInfoString(buf, " RETURNING ");
-		first = false;
-
-		if (qualify_col)
-			ADD_REL_QUALIFIER(buf, rtindex);
-		appendStringInfoString(buf, "ctid");
-
-		*retrieved_attrs = lappend_int(*retrieved_attrs,
-									   SelfItemPointerAttributeNumber);
-	}
-
 	/* Don't generate bad syntax if no undropped columns */
 	if (first && !is_returning)
 		appendStringInfoString(buf, "NULL");
@@ -2464,14 +2442,7 @@ static void
 deparseColumnRef(StringInfo buf, int varno, int varattno, RangeTblEntry *rte,
 				 bool qualify_col)
 {
-	/* We support fetching the remote side's CTID and OID. */
-	if (varattno == SelfItemPointerAttributeNumber)
-	{
-		if (qualify_col)
-			ADD_REL_QUALIFIER(buf, varno);
-		appendStringInfoString(buf, "ctid");
-	}
-	else if (varattno < 0)
+	if (varattno < 0)
 	{
 		/*
 		 * All other system attributes are fetched as 0, except for table OID,

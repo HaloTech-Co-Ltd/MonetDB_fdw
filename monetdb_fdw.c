@@ -4163,7 +4163,6 @@ make_tuple_from_result_row(MapiHdl res,
 	TupleDesc	tupdesc;
 	Datum	   *values;
 	bool	   *nulls;
-	ItemPointer ctid = NULL;
 	ConversionLocation errpos;
 	ErrorContextCallback errcallback;
 	MemoryContext oldcontext;
@@ -4224,8 +4223,6 @@ make_tuple_from_result_row(MapiHdl res,
 
 			/*
 			 * convert value to internal representation
-			 *
-			 * Note: we ignore system columns other than ctid and oid in result
 			 */
 			errpos.cur_attno = i;
 			if (i > 0)
@@ -4238,17 +4235,6 @@ make_tuple_from_result_row(MapiHdl res,
 												  valstr,
 												  attinmeta->attioparams[i - 1],
 												  attinmeta->atttypmods[i - 1]);
-			}
-			else if (i == SelfItemPointerAttributeNumber)
-			{
-				/* ctid */
-				if (valstr != NULL)
-				{
-					Datum		datum;
-
-					datum = DirectFunctionCall1(tidin, CStringGetDatum(valstr));
-					ctid = (ItemPointer) DatumGetPointer(datum);
-				}
 			}
 			errpos.cur_attno = 0;
 
@@ -4272,15 +4258,6 @@ make_tuple_from_result_row(MapiHdl res,
 	MemoryContextSwitchTo(oldcontext);
 
 	tuple = heap_form_tuple(tupdesc, values, nulls);
-
-	/*
-	 * If we have a CTID to return, install it in both t_self and t_ctid.
-	 * t_self is the normal place, but if the tuple is converted to a
-	 * composite Datum, t_self will be lost; setting t_ctid allows CTID to be
-	 * preserved during EvalPlanQual re-evaluations (see ROW_MARK_COPY code).
-	 */
-	if (ctid)
-		tuple->t_self = tuple->t_data->t_ctid = *ctid;
 
 	/*
 	 * Stomp on the xmin, xmax, and cmin fields from the tuple created by
@@ -4369,8 +4346,6 @@ conversion_error_callback(void *arg)
 				is_wholerow = true;
 			else if (colno > 0 && colno <= list_length(rte->eref->colnames))
 				attname = strVal(list_nth(rte->eref->colnames, colno - 1));
-			else if (colno == SelfItemPointerAttributeNumber)
-				attname = "ctid";
 		}
 	}
 	else if (rel)
@@ -4386,8 +4361,6 @@ conversion_error_callback(void *arg)
 
 			attname = NameStr(attr->attname);
 		}
-		else if (errpos->cur_attno == SelfItemPointerAttributeNumber)
-			attname = "ctid";
 	}
 
 	if (relname && is_wholerow)
@@ -4643,9 +4616,9 @@ static MonetdbFdwModifyState *create_foreign_modify(EState *estate,
 		fmstate->keyAttno = ExecFindJunkAttributeInTlist(subplan->targetlist,
 														  attrName);
 		if (!AttributeNumberIsValid(fmstate->keyAttno))
-			elog(ERROR, "could not find junk ctid column");
+			elog(ERROR, "could not find junk %s column", attrName);
 
-		/* First transmittable parameter will be ctid */
+		/* First transmittable parameter will be key */
 		getTypeOutputInfo(attrtype, &typefnoid, &isvarlena);
 		fmgr_info(typefnoid, &fmstate->p_flinfo[fmstate->p_nums]);
 		fmstate->p_nums++;
@@ -4688,7 +4661,7 @@ static TupleTableSlot **execute_foreign_modify(EState *estate,
 												int *numSlots)
 {
 	MonetdbFdwModifyState *fmstate = (MonetdbFdwModifyState *) resultRelInfo->ri_FdwState;
-	ItemPointer 	ctid = NULL;
+	ItemPointer 	key = NULL;
 	const char 		**p_values = NULL;
 	int				n_rows = 0;
 	StringInfoData 	sql;
@@ -4731,7 +4704,7 @@ static TupleTableSlot **execute_foreign_modify(EState *estate,
 	// 	prepare_foreign_modify(fmstate);
 
 	/*
-	 * For UPDATE/DELETE, get the ctid that was passed up as a resjunk column
+	 * For UPDATE/DELETE, get the key that was passed up as a resjunk column
 	 */
 	if (operation == CMD_UPDATE || operation == CMD_DELETE)
 	{
@@ -4743,12 +4716,12 @@ static TupleTableSlot **execute_foreign_modify(EState *estate,
 									 &isNull);
 		/* shouldn't ever get a null result... */
 		if (isNull)
-			elog(ERROR, "ctid is NULL");
-		ctid = (ItemPointer) DatumGetPointer(datum);
+			elog(ERROR, "key is NULL");
+		key = (ItemPointer) DatumGetPointer(datum);
 	}
 
 	/* Convert parameters needed by prepared statement to text form */
-	p_values = convert_prep_stmt_params(fmstate, ctid, slots, *numSlots);
+	p_values = convert_prep_stmt_params(fmstate, key, slots, *numSlots);
 
 	/*
 	 * Execute the prepared statement.
@@ -4802,7 +4775,7 @@ static TupleTableSlot **execute_foreign_modify(EState *estate,
  * convert_prep_stmt_params
  *		Create array of text strings representing parameter values
  *
- * tupleid is ctid to send, or NULL if none
+ * tupleid is key to send, or NULL if none
  * slot is slot to get remaining parameters from, or NULL if none
  *
  * Data is constructed in temp_cxt; caller should reset that after use.
@@ -4823,10 +4796,10 @@ convert_prep_stmt_params(MonetdbFdwModifyState *fmstate,
 
 	p_values = (const char **) palloc(sizeof(char *) * fmstate->p_nums * numSlots);
 
-	/* ctid is provided only for UPDATE/DELETE, which don't allow batching */
+	/* key is provided only for UPDATE/DELETE, which don't allow batching */
 	Assert(!(tupleid != NULL && numSlots > 1));
 
-	/* 1st parameter should be ctid, if it's in use */
+	/* 1st parameter should be key, if it's in use */
 	if (tupleid != NULL)
 	{
 		Assert(numSlots == 1);
