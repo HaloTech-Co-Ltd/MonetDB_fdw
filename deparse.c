@@ -1268,7 +1268,7 @@ deparseSelectStmtForRel(StringInfo buf, PlannerInfo *root, RelOptInfo *rel,
 		quals = remote_conds;
 
 	/* Construct FROM and WHERE clauses */
-	deparseFromExpr(quals, &context);
+	deparseFromExpr(quals, &context); 
 
 	if (IS_UPPER_REL(rel))
 	{
@@ -1509,8 +1509,8 @@ deparseLockingClause(deparse_expr_cxt *context)
 			(root->parse->commandType == CMD_UPDATE ||
 			 root->parse->commandType == CMD_DELETE))
 		{
-			/* Relation is UPDATE/DELETE target, so use FOR UPDATE */
-			appendStringInfoString(buf, " FOR UPDATE");
+			/* Relation is UPDATE/DELETE target, so use FOR UPDATE (MonetDB not support FOR UPDATE) */
+			appendStringInfoString(buf, " /* FOR UPDATE */");
 
 			/* Add the relation alias if we are here for a join relation */
 			if (IS_JOIN_REL(rel))
@@ -2223,13 +2223,45 @@ deparseDeleteSql(StringInfo buf, RangeTblEntry *rte,
 				 List *returningList,
 				 List **retrieved_attrs)
 {
+		char		*attrName = NULL;
+		Oid 		relid   = RelationGetRelid(rel);
+		TupleDesc 	tupdesc = rel->rd_att;
+
+		/* loop through all columns of the foreign table */
+		for (int i = 0; i < tupdesc->natts; ++i)
+		{
+			Form_pg_attribute att = TupleDescAttr(tupdesc, i);
+			ListCell 	*option;
+
+			/* look for the "key" option on this column */
+			List 	*option_list = GetForeignColumnOptions(relid, att->attnum);
+			foreach(option, option_list)
+			{
+				DefElem *def = (DefElem *)lfirst(option);
+
+				/* if "key" is set, add a resjunk for this column */
+				if (strcmp(def->defname, OPT_KEY) == 0 && getBoolVal(def))
+				{
+					attrName = pstrdup(NameStr(att->attname));
+					break;
+				}
+			}
+		}
+
+		if (!attrName)
+			ereport(ERROR,
+				(errcode(ERRCODE_FDW_UNABLE_TO_CREATE_EXECUTION),
+					errmsg("no primary key column specified for foreign MonetDB table"),
+					errdetail("For UPDATE or DELETE, at least one foreign table column must be marked as primary key column.")));
+
 	appendStringInfoString(buf, "DELETE FROM ");
 	deparseRelation(buf, rel);
-	appendStringInfoString(buf, " WHERE ctid = $1");
+	appendStringInfo(buf, " WHERE %s = ?", attrName); 
 
 	deparseReturningList(buf, rte, rtindex, rel,
 						 rel->trigdesc && rel->trigdesc->trig_delete_after_row,
 						 NIL, returningList, retrieved_attrs);
+	pfree(attrName);
 }
 
 /*

@@ -51,4 +51,12 @@ OPTIONS (schema_name 'zm', table_name 'emp');
 
 #### 限制
 
-MonetDB_fdw暂时仅支持SELECT、INSERT、TRUNCATE和EXPLAIN语句。
+MonetDB_fdw暂时仅支持INSERT、DELETE、SELECT、TRUNCATE和EXPLAIN语句。
+当使用DELETE语句时，要求远端MonetDB的表中存在主键，在PostgreSQL中需要将对应的字段相应的设置一下，
+可以使用如下语句设置，这是参考了Oracle_fdw来实现的功能，
+值得注意的是，MonetDB不支持SELECT FOR UPDATE这种使用方法
+
+```
+ALTER FOREIGN TABLE tab ALTER col OPTIONS (ADD key 'true');
+```
+

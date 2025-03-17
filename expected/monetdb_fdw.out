@@ -101,6 +101,64 @@ SELECT * FROM emp;
 ------+-----
 (0 rows)
 
+SELECT monetdb_execute('foreign_server', $$CREATE TABLE delete_emp(name VARCHAR(20) PRIMARY KEY, age INTEGER)$$);
+ monetdb_execute 
+-----------------
+ 
+(1 row)
+
+CREATE FOREIGN TABLE delete_emp(
+        name VARCHAR(20),
+        age INTEGER
+)
+SERVER foreign_server
+OPTIONS (schema_name 'test_u', table_name 'delete_emp');
+INSERT INTO delete_emp VALUES('John', 23);
+INSERT INTO delete_emp VALUES('Mary', 22);
+SELECT * FROM delete_emp;
+ name | age 
+------+-----
+ John |  23
+ Mary |  22
+(2 rows)
+
+INSERT INTO delete_emp VALUES('Mary', 22); -- error
+ERROR:  INSERT INTO: PRIMARY KEY constraint 'delete_emp.delete_emp_name_pkey' violated
+
+INSERT INTO delete_emp VALUES('Mary2', 22);
+SELECT * FROM delete_emp;
+ name  | age 
+-------+-----
+ John  |  23
+ Mary  |  22
+ Mary2 |  22
+(3 rows)
+
+-- test delete
+DELETE FROM delete_emp WHERE name = 'John'; -- error, need set key
+ERROR:  no primary key column specified for foreign MonetDB table
+DETAIL:  For UPDATE or DELETE, at least one foreign table column must be marked as primary key column.
+ALTER FOREIGN TABLE delete_emp ALTER name OPTIONS (ADD key 'true');
+DELETE FROM delete_emp WHERE name = 'John';
+SELECT * FROM delete_emp;
+ name  | age 
+-------+-----
+ Mary  |  22
+ Mary2 |  22
+(2 rows)
+
+DELETE FROM delete_emp WHERE age = 22;
+SELECT * FROM delete_emp;
+ name | age 
+------+-----
+(0 rows)
+
+SELECT monetdb_execute('foreign_server', $$DROP TABLE delete_emp$$);
+ monetdb_execute 
+-----------------
+ 
+(1 row)
+
 SELECT monetdb_execute('foreign_server', $$DROP TABLE emp$$);
  monetdb_execute 
 -----------------

@@ -21,6 +21,7 @@
 #include "access/table.h"
 #include "catalog/pg_class.h"
 #include "catalog/pg_opfamily.h"
+#include "catalog/pg_attribute.h"
 #include "catalog/pg_foreign_server.h"
 #include "commands/defrem.h"
 #include "commands/explain.h"
@@ -54,6 +55,7 @@
 #include "utils/sampling.h"
 #include "utils/selfuncs.h"
 #include "utils/syscache.h"
+#include "utils/ruleutils.h"
 
 PG_MODULE_MAGIC;
 
@@ -210,7 +212,7 @@ typedef struct MonetdbFdwModifyState
 	List	   *retrieved_attrs;	/* attr numbers retrieved by RETURNING */
 
 	/* info about parameters for prepared statement */
-	AttrNumber	ctidAttno;		/* attnum of input resjunk ctid column */
+	AttrNumber	keyAttno;		/* attnum of input resjunk key column */
 	int			p_nums;			/* number of parameters to transmit */
 	FmgrInfo   *p_flinfo;		/* output conversion functions for them */
 
@@ -331,10 +333,6 @@ static void MonetDB_BeginForeignInsert(ModifyTableState *mtstate,
 static void MonetDB_EndForeignInsert(EState *estate,
 									 ResultRelInfo *resultRelInfo);
 static int	MonetDB_IsForeignRelUpdatable(Relation rel);
-static bool MonetDB_PlanDirectModify(PlannerInfo *root,
-									 ModifyTable *plan,
-									 Index resultRelation,
-									 int subplan_index);
 static void MonetDB_BeginDirectModify(ForeignScanState *node, int eflags);
 static TupleTableSlot *MonetDB_IterateDirectModify(ForeignScanState *node);
 static void MonetDB_EndDirectModify(ForeignScanState *node);
@@ -482,7 +480,7 @@ monetdb_fdw_handler(PG_FUNCTION_ARGS)
 	routine->BeginForeignInsert = MonetDB_BeginForeignInsert;
 	routine->EndForeignInsert = MonetDB_EndForeignInsert;
 	routine->IsForeignRelUpdatable = MonetDB_IsForeignRelUpdatable;
-	routine->PlanDirectModify = MonetDB_PlanDirectModify;
+	routine->PlanDirectModify = NULL;
 	routine->BeginDirectModify = MonetDB_BeginDirectModify;
 	routine->IterateDirectModify = MonetDB_IterateDirectModify;
 	routine->EndDirectModify = MonetDB_EndDirectModify;
@@ -1304,7 +1302,7 @@ MonetDB_GetForeignPlan(PlannerInfo *root,
 							has_final_sort, has_limit, false,
 							&retrieved_attrs, &params_list);
 
-	/* Remember remote_exprs for possible use by MonetDB_PlanDirectModify */
+	/* Remember remote_exprs for possible use by PlanDirectModify */
 	fpinfo->final_remote_exprs = remote_exprs;
 
 	/*
@@ -1522,6 +1520,7 @@ MonetDB_IterateForeignScan(ForeignScanState *node)
 
 	if (!fsstate->hdl)
 	{
+		elog(DEBUG2, "monetdb_fdw remote query is: %s", fsstate->query);
 		/* Submit a query and wait for the result. */
 		if ((fsstate->hdl = mapi_query(fsstate->conn, fsstate->query)) == NULL ||
 			mapi_error(fsstate->conn) != MOK)
@@ -1604,7 +1603,45 @@ MonetDB_AddForeignUpdateTargets(PlannerInfo *root,
 								RangeTblEntry *target_rte,
 								Relation target_relation)
 {
-	elog(ERROR, "MonetDB_AddForeignUpdateTargets not supported yet");
+	bool 	  has_key = false;
+	Oid 	  relid   = RelationGetRelid(target_relation);
+	TupleDesc tupdesc = target_relation->rd_att;
+
+	/* loop through all columns of the foreign table */
+	for (int i = 0; i < tupdesc->natts; ++i)
+	{
+		Form_pg_attribute att = TupleDescAttr(tupdesc, i);
+		ListCell 	*option;
+
+		/* look for the "key" option on this column */
+		List 	*options = GetForeignColumnOptions(relid, att->attnum);
+		foreach(option, options)
+		{
+			DefElem *def = (DefElem *)lfirst(option);
+
+			/* if "key" is set, add a resjunk for this column */
+			if (strcmp(def->defname, OPT_KEY) == 0)
+			{
+				if (getBoolVal(def))
+				{
+					Var *var = makeVar(rtindex,
+										att->attnum,
+										att->atttypid,
+										att->atttypmod,
+										att->attcollation,
+										0);
+					add_row_identity_var(root, var, rtindex, NameStr(att->attname));
+					has_key = true;
+				}
+			}
+		}
+	}
+
+	if (!has_key)
+		ereport(ERROR,
+			(errcode(ERRCODE_FDW_UNABLE_TO_CREATE_EXECUTION),
+				errmsg("no primary key column specified for foreign MonetDB table"),
+				errdetail("For UPDATE or DELETE, at least one foreign table column must be marked as primary key column.")));
 }
 
 /*
@@ -1862,7 +1899,13 @@ MonetDB_ExecForeignDelete(EState *estate,
 						  TupleTableSlot *slot,
 						  TupleTableSlot *planSlot)
 {
-	elog(ERROR, "MonetDB_ExecForeignDelete not supported yet");
+	TupleTableSlot **rslot;
+	int			numSlots = 1;
+
+	rslot = execute_foreign_modify(estate, resultRelInfo, CMD_DELETE,
+								   &slot, &planSlot, &numSlots);
+
+	return rslot ? rslot[0] : NULL;
 }
 
 /*
@@ -2087,30 +2130,6 @@ MonetDB_RecheckForeignScan(ForeignScanState *node, TupleTableSlot *slot)
 }
 
 /*
- * MonetDB_PlanDirectModify
- *		Consider a direct foreign table modification
- *
- * Decide whether it is safe to modify a foreign table directly, and if so,
- * rewrite subplan accordingly.
- */
-static bool
-MonetDB_PlanDirectModify(PlannerInfo *root,
-						 ModifyTable *plan,
-						 Index resultRelation,
-						 int subplan_index)
-{
-	CmdType		operation = plan->operation;
-	/*
-	 * The table modification must be an UPDATE or DELETE.
-	 */
-	if (operation != CMD_UPDATE && operation != CMD_DELETE)
-		return false;
-	
-	elog(ERROR, "MonetDB_PlanDirectModify");
-	return true;
-}
-
-/*
  * MonetDB_BeginDirectModify
  *		Prepare a direct foreign table modification
  */
@@ -2148,15 +2167,18 @@ static void
 MonetDB_ExplainForeignScan(ForeignScanState *node, ExplainState *es)
 {
 	MonetdbFdwScanState *fsstate = (MonetdbFdwScanState *) node->fdw_state;
+	char	*remote_sql = psprintf("plan %s", fsstate->query);
+	elog(DEBUG2, "monetdb_fdw remote query is: %s", remote_sql);
 
 	/* show query */
 	ExplainPropertyText("MonetDB query", fsstate->query, es);
-	if ((fsstate->hdl = mapi_query(fsstate->conn, psprintf("plan %s", fsstate->query))) == NULL || mapi_error(fsstate->conn))
+	if ((fsstate->hdl = mapi_query(fsstate->conn, remote_sql)) == NULL || mapi_error(fsstate->conn))
 		die(fsstate->conn, fsstate->hdl);
 	/* show plan */
 	while (mapi_fetch_row(fsstate->hdl)) {
 		ExplainPropertyText("MonetDB plan", mapi_fetch_field(fsstate->hdl, 0), es);
 	}
+	pfree(remote_sql);
 }
 
 /*
@@ -2304,7 +2326,8 @@ MonetDB_ExecForeignTruncate(List *rels,
 	/* Construct the TRUNCATE command string */
 	initStringInfo(&sql);
 	deparseTruncateSql(&sql, rels, behavior, restart_seqs);
-
+	elog(DEBUG2, "monetdb_fdw remote query is: %s", sql.data);
+	
 	/* Issue the TRUNCATE command to remote server */
 	conn = mapi_connect(host, atoi(port), user_str, password, "sql", dbname);
 	if ((hdl = mapi_query(conn, sql.data)) == NULL || mapi_error(conn))
@@ -4583,16 +4606,47 @@ static MonetdbFdwModifyState *create_foreign_modify(EState *estate,
 
 	if (operation == CMD_UPDATE || operation == CMD_DELETE)
 	{
+		char		*attrName = NULL;
+		Oid 		relid   = RelationGetRelid(rel);
+		Oid			attrtype = InvalidOid;
 		Assert(subplan != NULL);
+		
+		/* loop through all columns of the foreign table */
+		for (int i = 0; i < tupdesc->natts; ++i)
+		{
+			Form_pg_attribute att = TupleDescAttr(tupdesc, i);
+			ListCell 	*option;
 
-		/* Find the ctid resjunk column in the subplan's result */
-		fmstate->ctidAttno = ExecFindJunkAttributeInTlist(subplan->targetlist,
-														  "ctid");
-		if (!AttributeNumberIsValid(fmstate->ctidAttno))
+			/* look for the "key" option on this column */
+			List 	*option_list = GetForeignColumnOptions(relid, att->attnum);
+			foreach(option, option_list)
+			{
+				DefElem *def = (DefElem *)lfirst(option);
+
+				/* if "key" is set, add a resjunk for this column */
+				if (strcmp(def->defname, OPT_KEY) == 0 && getBoolVal(def))
+				{
+					attrName = pstrdup(NameStr(att->attname));
+					attrtype = att->atttypid;
+					break;
+				}
+			}
+		}
+
+		if (!attrName)
+			ereport(ERROR,
+				(errcode(ERRCODE_FDW_UNABLE_TO_CREATE_EXECUTION),
+					errmsg("no primary key column specified for foreign MonetDB table"),
+					errdetail("For UPDATE or DELETE, at least one foreign table column must be marked as primary key column.")));
+
+		/* Find the key resjunk column in the subplan's result */
+		fmstate->keyAttno = ExecFindJunkAttributeInTlist(subplan->targetlist,
+														  attrName);
+		if (!AttributeNumberIsValid(fmstate->keyAttno))
 			elog(ERROR, "could not find junk ctid column");
 
 		/* First transmittable parameter will be ctid */
-		getTypeOutputInfo(TIDOID, &typefnoid, &isvarlena);
+		getTypeOutputInfo(attrtype, &typefnoid, &isvarlena);
 		fmgr_info(typefnoid, &fmstate->p_flinfo[fmstate->p_nums]);
 		fmstate->p_nums++;
 	}
@@ -4634,17 +4688,19 @@ static TupleTableSlot **execute_foreign_modify(EState *estate,
 												int *numSlots)
 {
 	MonetdbFdwModifyState *fmstate = (MonetdbFdwModifyState *) resultRelInfo->ri_FdwState;
-	ItemPointer ctid = NULL;
-	const char **p_values;
-	int			n_rows;
-	StringInfoData sql;
-	MapiHdl result = NULL;
+	ItemPointer 	ctid = NULL;
+	const char 		**p_values = NULL;
+	int				n_rows = 0;
+	StringInfoData 	sql;
+	MapiHdl 		result = NULL;
+	const char		*prepare_sql = replaceDollarNumbers(fmstate->query);
 
 	/* The operation should be INSERT, UPDATE, or DELETE */
 	Assert(operation == CMD_INSERT ||
 		   operation == CMD_UPDATE ||
 		   operation == CMD_DELETE);
 
+	elog(DEBUG2, "monetdb_fdw remote prepare query is: %s", prepare_sql);
 	// /* First, process a pending asynchronous request, if any. */
 	// if (fmstate->conn_state->pendingAreq)
 	// 	process_pending_request(fmstate->conn_state->pendingAreq);
@@ -4683,7 +4739,7 @@ static TupleTableSlot **execute_foreign_modify(EState *estate,
 		bool		isNull;
 
 		datum = ExecGetJunkAttribute(planSlots[0],
-									 fmstate->ctidAttno,
+									 fmstate->keyAttno,
 									 &isNull);
 		/* shouldn't ever get a null result... */
 		if (isNull)
@@ -4698,10 +4754,11 @@ static TupleTableSlot **execute_foreign_modify(EState *estate,
 	 * Execute the prepared statement.
 	 * Get the result, and check for success.
 	 */
-	result = mapi_prepare(fmstate->conn, replaceDollarNumbers(fmstate->query));
+	result = mapi_prepare(fmstate->conn, prepare_sql);
 	for(int i = 0; i < fmstate->p_nums; i++)
     {
 		/* bind value */
+		elog(DEBUG2, "monetdb_fdw bind value%d: %s", i, (char *) p_values[i]);
         mapi_param_string(result, i, MAPI_VARCHAR, (char *) p_values[i], NULL);
     }
 
@@ -4923,6 +4980,7 @@ monetdb_execute(PG_FUNCTION_ARGS)
 	list_free(options);
 	
 	elog(DEBUG2, "monetdb: host %s port %s user %s password %s dbname %s", host, port, user_str, password, dbname);
+	elog(DEBUG2, "monetdb_fdw remote query is: %s", stmt);
 	conn = mapi_connect(host, atoi(port), user_str, password, "sql", dbname);
 	if ((hdl = mapi_query(conn, stmt)) == NULL || mapi_error(conn))
 		die(conn, hdl);
@@ -4964,4 +5022,23 @@ monetdb_execute(PG_FUNCTION_ARGS)
 		die(conn, hdl);
 	mapi_destroy(conn);
 	PG_RETURN_VOID();
+}
+
+bool
+getBoolVal(DefElem *def)
+{
+	char *s = strVal(def->arg);
+	if (pg_strcasecmp(s, "on") == 0
+			|| pg_strcasecmp(s, "yes") == 0
+			|| pg_strcasecmp(s, "true") == 0)
+		return true;
+	else if (pg_strcasecmp(s, "off") == 0
+			|| pg_strcasecmp(s, "no") == 0
+			|| pg_strcasecmp(s, "false") == 0)
+		return false;
+	else
+		ereport(ERROR,
+			(errcode(ERRCODE_FDW_INVALID_ATTRIBUTE_VALUE),
+			 errmsg("invalid value for option \"%s\"", def->defname),
+			 errhint("Valid values in this context are: on/yes/true or off/no/false")));
 }

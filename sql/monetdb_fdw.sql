@@ -47,6 +47,31 @@ INSERT INTO emp VALUES('Mary', 22);
 TRUNCATE TABLE emp;
 SELECT * FROM emp;
 
+SELECT monetdb_execute('foreign_server', $$CREATE TABLE delete_emp(name VARCHAR(20) PRIMARY KEY, age INTEGER)$$);
+CREATE FOREIGN TABLE delete_emp(
+        name VARCHAR(20),
+        age INTEGER
+)
+SERVER foreign_server
+OPTIONS (schema_name 'test_u', table_name 'delete_emp');
+
+INSERT INTO delete_emp VALUES('John', 23);
+INSERT INTO delete_emp VALUES('Mary', 22);
+SELECT * FROM delete_emp;
+
+INSERT INTO delete_emp VALUES('Mary', 22); -- error
+INSERT INTO delete_emp VALUES('Mary2', 22);
+SELECT * FROM delete_emp;
+
+-- test delete
+DELETE FROM delete_emp WHERE name = 'John'; -- error, need set key
+ALTER FOREIGN TABLE delete_emp ALTER name OPTIONS (ADD key 'true');
+DELETE FROM delete_emp WHERE name = 'John';
+SELECT * FROM delete_emp;
+DELETE FROM delete_emp WHERE age = 22;
+SELECT * FROM delete_emp;
+
+SELECT monetdb_execute('foreign_server', $$DROP TABLE delete_emp$$);
 SELECT monetdb_execute('foreign_server', $$DROP TABLE emp$$);
 SELECT monetdb_execute('foreign_server', $$ALTER USER test_u SET SCHEMA sys$$);
 SELECT monetdb_execute('foreign_server', $$DROP SCHEMA test_u$$);

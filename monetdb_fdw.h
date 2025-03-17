@@ -19,6 +19,9 @@
 #include "nodes/pathnodes.h"
 #include "utils/relcache.h"
 
+/* like oracle_fdw */
+#define OPT_KEY "key"
+
 #define MAPI_AUTO	0	/* automatic type detection */
 #define MAPI_TINY	1
 #define MAPI_UTINY	2
@@ -148,6 +151,7 @@ typedef struct MonetdbFdwRelationInfo
 /* in monetdb_fdw.c */
 extern int	set_transmission_modes(void);
 extern void reset_transmission_modes(int nestlevel);
+extern bool getBoolVal(DefElem *def);
 
 /* in deparse.c */
 extern void classifyConditions(PlannerInfo *root,
