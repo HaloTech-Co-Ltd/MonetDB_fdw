@@ -1886,7 +1886,13 @@ MonetDB_ExecForeignUpdate(EState *estate,
 						  TupleTableSlot *slot,
 						  TupleTableSlot *planSlot)
 {
-	elog(ERROR, "MonetDB_ExecForeignUpdate not supported yet");
+	TupleTableSlot **rslot;
+	int			numSlots = 1;
+
+	rslot = execute_foreign_modify(estate, resultRelInfo, CMD_UPDATE,
+								   &slot, &planSlot, &numSlots);
+
+	return rslot ? rslot[0] : NULL;
 }
 
 /*
@@ -4728,12 +4734,28 @@ static TupleTableSlot **execute_foreign_modify(EState *estate,
 	 * Get the result, and check for success.
 	 */
 	result = mapi_prepare(fmstate->conn, prepare_sql);
-	for(int i = 0; i < fmstate->p_nums; i++)
-    {
-		/* bind value */
-		elog(DEBUG2, "monetdb_fdw bind value%d: %s", i, (char *) p_values[i]);
-        mapi_param_string(result, i, MAPI_VARCHAR, (char *) p_values[i], NULL);
-    }
+	if (operation == CMD_UPDATE)
+	{
+		for(int i = 1; i < fmstate->p_nums; i++)
+		{
+			/* bind value */
+			elog(DEBUG2, "monetdb_fdw bind value%d: %s", i - 1, (char *) p_values[i]);
+			mapi_param_string(result, i - 1, MAPI_VARCHAR, (char *) p_values[i], NULL);
+		}
+
+		/* key is always the first param */
+		elog(DEBUG2, "monetdb_fdw bind value%d: %s", fmstate->p_nums - 1, (char *) p_values[0]);
+		mapi_param_string(result, fmstate->p_nums - 1, MAPI_VARCHAR, (char *) p_values[0], NULL);
+	}
+	else
+	{
+		for(int i = 0; i < fmstate->p_nums; i++)
+		{
+			/* bind value */
+			elog(DEBUG2, "monetdb_fdw bind value%d: %s", i, (char *) p_values[i]);
+			mapi_param_string(result, i, MAPI_VARCHAR, (char *) p_values[i], NULL);
+		}
+	}
 
     mapi_execute(result);
 	if (result == NULL || mapi_error(fmstate->conn))

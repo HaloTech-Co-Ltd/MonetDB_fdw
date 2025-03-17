@@ -2062,11 +2062,41 @@ deparseUpdateSql(StringInfo buf, RangeTblEntry *rte,
 	bool		first;
 	ListCell   *lc;
 
+	char		*attrName = NULL;
+	Oid 		relid   = RelationGetRelid(rel);
+
+	/* loop through all columns of the foreign table */
+	for (int i = 0; i < tupdesc->natts; ++i)
+	{
+		Form_pg_attribute att = TupleDescAttr(tupdesc, i);
+		ListCell 	*option;
+
+		/* look for the "key" option on this column */
+		List 	*option_list = GetForeignColumnOptions(relid, att->attnum);
+		foreach(option, option_list)
+		{
+			DefElem *def = (DefElem *)lfirst(option);
+
+			/* if "key" is set, add a resjunk for this column */
+			if (strcmp(def->defname, OPT_KEY) == 0 && getBoolVal(def))
+			{
+				attrName = pstrdup(NameStr(att->attname));
+				break;
+			}
+		}
+	}
+
+	if (!attrName)
+		ereport(ERROR,
+			(errcode(ERRCODE_FDW_UNABLE_TO_CREATE_EXECUTION),
+				errmsg("no primary key column specified for foreign MonetDB table"),
+				errdetail("For UPDATE or DELETE, at least one foreign table column must be marked as primary key column.")));
+
 	appendStringInfoString(buf, "UPDATE ");
 	deparseRelation(buf, rel);
 	appendStringInfoString(buf, " SET ");
 
-	pindex = 2;					/* ctid is always the first param */
+	pindex = 2;					/* key is always the first param */
 	first = true;
 	foreach(lc, targetAttrs)
 	{
@@ -2086,7 +2116,7 @@ deparseUpdateSql(StringInfo buf, RangeTblEntry *rte,
 			pindex++;
 		}
 	}
-	appendStringInfoString(buf, " WHERE ctid = $1");
+	appendStringInfo(buf, " WHERE %s = ?", attrName);
 
 	deparseReturningList(buf, rte, rtindex, rel,
 						 rel->trigdesc && rel->trigdesc->trig_update_after_row,

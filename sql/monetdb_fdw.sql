@@ -71,6 +71,23 @@ SELECT * FROM delete_emp;
 DELETE FROM delete_emp WHERE age = 22;
 SELECT * FROM delete_emp;
 
+set client_min_messages = 'debug2';
+INSERT INTO emp VALUES('John', 23);
+INSERT INTO emp VALUES('Mary', 22);
+SELECT * FROM emp;
+
+INSERT INTO delete_emp VALUES('John', 23);
+INSERT INTO delete_emp VALUES('Mary', 22);
+SELECT * FROM delete_emp;
+
+-- test update
+UPDATE emp SET name = 'Mary2' WHERE name = 'Mary'; -- error
+UPDATE delete_emp SET name = 'Mary2' WHERE name = 'Mary'; -- ok
+SELECT * FROM delete_emp;
+UPDATE delete_emp SET name = 'John2' WHERE age = 23; 
+SELECT * FROM delete_emp;
+
+set client_min_messages = 'INFO';
 SELECT monetdb_execute('foreign_server', $$DROP TABLE delete_emp$$);
 SELECT monetdb_execute('foreign_server', $$DROP TABLE emp$$);
 SELECT monetdb_execute('foreign_server', $$ALTER USER test_u SET SCHEMA sys$$);

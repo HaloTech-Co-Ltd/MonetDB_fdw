@@ -25,7 +25,7 @@ make && make install
 
 #### 回归测试
 
-如果您想要运行回归测试，这需要您在MonetDB创建一个名为test的数据库，IP：127.0.0.1 端口50000
+如果您想要运行回归测试，这需要您在MonetDB创建一个名为test的数据库，IP：127.0.0.1 端口：50000
 
 相关测试内容详见[monetdb_fdw.sql](./sql/monetdb_fdw.sql)
 
@@ -51,12 +51,16 @@ OPTIONS (schema_name 'zm', table_name 'emp');
 
 #### 限制
 
-MonetDB_fdw暂时仅支持INSERT、DELETE、SELECT、TRUNCATE和EXPLAIN语句。
-当使用DELETE语句时，要求远端MonetDB的表中存在主键，在PostgreSQL中需要将对应的字段相应的设置一下，
-可以使用如下语句设置，这是参考了Oracle_fdw来实现的功能，
-值得注意的是，MonetDB不支持SELECT FOR UPDATE这种使用方法
+MonetDB_fdw暂时仅支持INSERT、DELETE、UPDATE、SELECT、TRUNCATE和EXPLAIN语句。
+
+由于是参考了Oracle_fdw来实现的功能，所以当使用DELETE、UPDATE语句时，要求远端MonetDB的表中存在主键，
+
+同时需要在PostgreSQL中需要将对应的字段相应的标识一下，可以使用如下语句设置
 
 ```
 ALTER FOREIGN TABLE tab ALTER col OPTIONS (ADD key 'true');
 ```
 
+值得注意的是，MonetDB不支持SELECT FOR UPDATE这种使用方法，
+
+所以多个会话并发DELETE或UPDATE可能会存在问题（待优化）。
