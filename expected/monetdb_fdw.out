@@ -79,10 +79,10 @@ name,age
 -- test explain
 -- EXPLAIN (COSTS OFF) SELECT * FROM emp;
 EXPLAIN (COSTS OFF) INSERT INTO emp VALUES('Mary test', 21);
-                               QUERY PLAN                               
-------------------------------------------------------------------------
+                              QUERY PLAN                              
+----------------------------------------------------------------------
  Insert on emp
-   MonetDB statement: INSERT INTO test_u.emp(name, age) VALUES ($1, $2)
+   MonetDB statement: INSERT INTO test_u.emp(name, age) VALUES (?, ?)
    ->  Result
 (3 rows)
 

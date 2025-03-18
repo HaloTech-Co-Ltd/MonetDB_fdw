@@ -1925,7 +1925,6 @@ deparseInsertSql(StringInfo buf, RangeTblEntry *rte,
 				 List **retrieved_attrs, int *values_end_len)
 {
 	TupleDesc	tupdesc = RelationGetDescr(rel);
-	AttrNumber	pindex;
 	bool		first;
 	ListCell   *lc;
 
@@ -1950,7 +1949,6 @@ deparseInsertSql(StringInfo buf, RangeTblEntry *rte,
 
 		appendStringInfoString(buf, ") VALUES (");
 
-		pindex = 1;
 		first = true;
 		foreach(lc, targetAttrs)
 		{
@@ -1964,10 +1962,7 @@ deparseInsertSql(StringInfo buf, RangeTblEntry *rte,
 			if (attr->attgenerated)
 				appendStringInfoString(buf, "DEFAULT");
 			else
-			{
-				appendStringInfo(buf, "$%d", pindex);
-				pindex++;
-			}
+				appendStringInfoString(buf, "?");
 		}
 
 		appendStringInfoChar(buf, ')');
@@ -2058,7 +2053,6 @@ deparseUpdateSql(StringInfo buf, RangeTblEntry *rte,
 				 List **retrieved_attrs)
 {
 	TupleDesc	tupdesc = RelationGetDescr(rel);
-	AttrNumber	pindex;
 	bool		first;
 	ListCell   *lc;
 
@@ -2096,7 +2090,6 @@ deparseUpdateSql(StringInfo buf, RangeTblEntry *rte,
 	deparseRelation(buf, rel);
 	appendStringInfoString(buf, " SET ");
 
-	pindex = 2;					/* key is always the first param */
 	first = true;
 	foreach(lc, targetAttrs)
 	{
@@ -2111,10 +2104,7 @@ deparseUpdateSql(StringInfo buf, RangeTblEntry *rte,
 		if (attr->attgenerated)
 			appendStringInfoString(buf, " = DEFAULT");
 		else
-		{
-			appendStringInfo(buf, " = $%d", pindex);
-			pindex++;
-		}
+			appendStringInfoString(buf, " = ?");
 	}
 	appendStringInfo(buf, " WHERE %s = ?", attrName);
 

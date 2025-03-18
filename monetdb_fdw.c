@@ -448,7 +448,7 @@ static const char **convert_prep_stmt_params(MonetdbFdwModifyState *fmstate,
 													ItemPointer tupleid,
 													TupleTableSlot **slots,
 													int numSlots);
-static const char *replaceDollarNumbers(const char* input);
+
 /*
  * Foreign-data wrapper handler function: return a struct with pointers
  * to my callback routines.
@@ -4672,14 +4672,13 @@ static TupleTableSlot **execute_foreign_modify(EState *estate,
 	int				n_rows = 0;
 	StringInfoData 	sql;
 	MapiHdl 		result = NULL;
-	const char		*prepare_sql = replaceDollarNumbers(fmstate->query);
 
 	/* The operation should be INSERT, UPDATE, or DELETE */
 	Assert(operation == CMD_INSERT ||
 		   operation == CMD_UPDATE ||
 		   operation == CMD_DELETE);
 
-	elog(DEBUG2, "monetdb_fdw remote prepare query is: %s", prepare_sql);
+	elog(DEBUG2, "monetdb_fdw remote prepare query is: %s", fmstate->query);
 	// /* First, process a pending asynchronous request, if any. */
 	// if (fmstate->conn_state->pendingAreq)
 	// 	process_pending_request(fmstate->conn_state->pendingAreq);
@@ -4733,7 +4732,7 @@ static TupleTableSlot **execute_foreign_modify(EState *estate,
 	 * Execute the prepared statement.
 	 * Get the result, and check for success.
 	 */
-	result = mapi_prepare(fmstate->conn, prepare_sql);
+	result = mapi_prepare(fmstate->conn, fmstate->query);
 	if (operation == CMD_UPDATE)
 	{
 		for(int i = 1; i < fmstate->p_nums; i++)
@@ -4872,52 +4871,6 @@ convert_prep_stmt_params(MonetdbFdwModifyState *fmstate,
 	MemoryContextSwitchTo(oldcontext);
 
 	return p_values;
-}
-
-/* 
- * INSERT INTO zm.emp(name, age) VALUES ($1, $2)
- * INSERT INTO zm.emp(name, age) VALUES (?, ?)
- */
-static const char * 
-replaceDollarNumbers(const char *input)
-{
-    char	*result = NULL;
-	size_t 	i = 0, 
-			j = 0, 
-			len = 0;
-
-    if (input == NULL)
-	{
-		elog(ERROR, "input is NULL");
-        return NULL;
-	}
-
-   	len = strlen(input);
-    result = (char *) palloc0((len + 1) * sizeof(char));
-    if (result == NULL)
-        return NULL;
-
-    while (input[i] != '\0')
-	{
-        if (input[i] == '$') 
-		{
-            if (isdigit((unsigned char)input[i + 1])) 
-			{
-                result[j++] = '?';
-                i++;
-                while (isdigit((unsigned char)input[i])) 
-				{
-                    i++;
-                }
-                continue;
-            }
-        }
-        result[j++] = input[i++];
-    }
-    result[j] = '\0';
-
-    result = (char *) repalloc(result, (j + 1) * sizeof(char));
-    return (const char *) result;
 }
 
 /*
