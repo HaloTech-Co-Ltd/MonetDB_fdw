@@ -18,7 +18,7 @@
 #### 快速开始（Linux）：
 
 ```sh
-git clone https://github.com/Leo-XM-Zeng/MonetDB_fdw.git
+git clone https://github.com/Z-Xiao-M/MonetDB_fdw.git
 cd MonetDB_fdw
 make && make install
 ```
