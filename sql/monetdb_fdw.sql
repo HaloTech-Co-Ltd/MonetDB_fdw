@@ -8,6 +8,7 @@ OPTIONS (host '127.0.0.1', port '50000', dbname 'test');
 CREATE USER MAPPING FOR CURRENT_USER SERVER foreign_server OPTIONS (user 'monetdb', password 'monetdb');
 
 SELECT monetdb_execute('foreign_server', $$DROP USER test_u$$);
+SELECT monetdb_execute('foreign_server', $$DROP SCHEMA test_u$$);
 SELECT monetdb_execute('foreign_server', $$CREATE USER "test_u" WITH PASSWORD 'test_u' NAME 'test_user' SCHEMA "sys"$$);
 SELECT monetdb_execute('foreign_server', $$CREATE SCHEMA IF NOT EXISTS "test_u" AUTHORIZATION "test_u"$$);
 SELECT monetdb_execute('foreign_server', $$ALTER USER "test_u" SET SCHEMA "test_u"$$);
@@ -94,7 +95,29 @@ SELECT * FROM delete_emp;
 UPDATE delete_emp SET name = 'Mary' WHERE name = 'Mary2' RETURNING *; -- error, MonetDB "UPDATE ... RETURNING" has bug
 SELECT * FROM delete_emp;
 
+DROP FOREIGN TABLE emp;
+DROP FOREIGN TABLE delete_emp;
+SELECT monetdb_execute('foreign_server', $$CREATE TABLE test_default(name VARCHAR(20) default 'zm', age INTEGER)$$);
+-- test IMPORT FOREIGN SCHEMA
+IMPORT FOREIGN SCHEMA "test_u" from server foreign_server into public;
+\dE
+SELECT * FROM emp;
+SELECT * FROM delete_emp;
+EXPLAIN VERBOSE INSERT INTO test_default(age) values(22);
+INSERT INTO test_default(age) values(22);
+SELECT * FROM test_default;
+DROP FOREIGN TABLE test_default;
+
+-- test IMPORT FOREIGN SCHEMA ... LIMIT TO
+IMPORT FOREIGN SCHEMA "test_u" limit to (test_default) from server foreign_server into public;
+\d+ test_default
+SELECT * FROM test_default;
+
 set client_min_messages = 'INFO';
+DROP FOREIGN TABLE emp;
+DROP FOREIGN TABLE delete_emp;
+DROP FOREIGN TABLE test_default;
+SELECT monetdb_execute('foreign_server', $$DROP TABLE test_default$$);
 SELECT monetdb_execute('foreign_server', $$DROP TABLE delete_emp$$);
 SELECT monetdb_execute('foreign_server', $$DROP TABLE emp$$);
 SELECT monetdb_execute('foreign_server', $$ALTER USER test_u SET SCHEMA sys$$);

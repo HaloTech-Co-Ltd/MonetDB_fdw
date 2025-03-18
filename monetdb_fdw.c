@@ -3119,7 +3119,217 @@ MonetDB_AnalyzeForeignTable(Relation relation,
 static List *
 MonetDB_ImportForeignSchema(ImportForeignSchemaStmt *stmt, Oid serverOid)
 {
-	elog(ERROR, "MonetDB_ImportForeignSchema not supported yet");
+	List	   *commands = NIL;
+	ForeignServer *server;
+	UserMapping *mapping;
+	Mapi 	   	conn;
+	MapiHdl 	hdl;
+	StringInfoData buf;
+	int			numrows,
+				i;
+	ListCell   *lc;
+	char 		*host = NULL;        
+	char 		*port = NULL;         
+	char 		*user_str = NULL;          
+	char 		*password = NULL;         
+	char 		*dbname = NULL;
+	List	   	*options = NIL;
+
+	/*
+	 * Get connection to the foreign server.  Connection manager will
+	 * establish new connection if necessary.
+	 */
+	server = GetForeignServer(serverOid);
+	mapping = GetUserMapping(GetUserId(), server->serverid);
+
+	options = list_concat(options, server->options);
+	options = list_concat(options, mapping->options);
+	foreach(lc, options)
+	{
+		DefElem    *def = (DefElem *) lfirst(lc);
+
+		if (strcmp(def->defname, "host") == 0)
+			host = defGetString(def);
+		else if (strcmp(def->defname, "port") == 0)
+			port = defGetString(def);
+		else if (strcmp(def->defname, "user") == 0)
+			user_str = defGetString(def);
+		else if (strcmp(def->defname, "password") == 0)
+			password = defGetString(def);
+		else if (strcmp(def->defname, "dbname") == 0)
+			dbname = defGetString(def);
+	}
+	list_free(options);
+	elog(DEBUG2, "monetdb: host: %s port: %s user: %s password: %s dbname: %s", host, port, user_str, password, dbname);
+	
+	/* Issue the TRUNCATE command to remote server */
+	conn = mapi_connect(host, atoi(port), user_str, password, "sql", dbname);
+
+	/* Create workspace for strings */
+	initStringInfo(&buf);
+
+	/* Check that the schema really exists */
+	appendStringInfoString(&buf, "SELECT 1 FROM sys.schemas WHERE name = ");
+	deparseStringLiteral(&buf, stmt->remote_schema);
+	elog(DEBUG2, "monetdb_fdw remote query is: %s", buf.data);
+	if ((hdl = mapi_query(conn, buf.data)) == NULL || mapi_error(conn))
+		die(conn, hdl);
+
+	if (mapi_get_row_count(hdl) != 1)
+		ereport(ERROR,
+				(errcode(ERRCODE_FDW_SCHEMA_NOT_FOUND),
+					errmsg("schema \"%s\" is not present on foreign server \"%s\"",
+						stmt->remote_schema, server->servername)));
+
+	if (mapi_close_handle(hdl) != MOK)
+		die(conn, hdl);
+	resetStringInfo(&buf);
+
+	/*
+	* Fetch all table data from this schema, possibly restricted by
+	* EXCEPT or LIMIT TO.  (We don't actually need to pay any attention
+	* to EXCEPT/LIMIT TO here, because the core code will filter the
+	* statements we return according to those lists anyway.  But it
+	* should save a few cycles to not process excluded tables in the
+	* first place.)
+	*
+	* Import table data for partitions only when they are explicitly
+	* specified in LIMIT TO clause. Otherwise ignore them and only
+	* include the definitions of the root partitioned tables to allow
+	* access to the complete remote data set locally in the schema
+	* imported.
+	*/
+	appendStringInfoString(&buf,
+							"SELECT t.name as table_name, \n"
+							"  c.name as col_name, \n"
+							"  sys.sql_datatype(c.type, c.type_digits, c.type_scale, false, false) as type, \n"
+							"  CASE WHEN c.\"null\" THEN 'false' ELSE 'true' END as expr, \n"
+							"  sys.ifthenelse(c.\"default\" IS NOT NULL, c.\"default\", NULL) as default_expr, \n");
+
+	appendStringInfoString(&buf, " (SELECT true FROM sys.objects kc, sys.keys k where kc.id = k.id and k.table_id = t.id and kc.name = c.name AND k.type = 0) AS pk, \n");
+
+	appendStringInfoString(&buf, " c.number as attnum \n");
+
+	appendStringInfoString(&buf, " FROM sys.tables t, sys.schemas s, sys.columns c  \n");
+
+	appendStringInfoString(&buf,
+							" WHERE t.schema_id = s.id \n"
+							"  AND t.type = 0 \n"
+							"  AND c.table_id = t.id \n"
+							"  AND s.name = ");
+	deparseStringLiteral(&buf, stmt->remote_schema);
+
+	/* Apply restrictions for LIMIT TO and EXCEPT */
+	if (stmt->list_type == FDW_IMPORT_SCHEMA_LIMIT_TO ||
+		stmt->list_type == FDW_IMPORT_SCHEMA_EXCEPT)
+	{
+		bool		first_item = true;
+
+		appendStringInfoString(&buf, " AND t.name ");
+		if (stmt->list_type == FDW_IMPORT_SCHEMA_EXCEPT)
+			appendStringInfoString(&buf, "NOT ");
+		appendStringInfoString(&buf, "IN (");
+
+		/* Append list of table names within IN clause */
+		foreach(lc, stmt->table_list)
+		{
+			RangeVar   *rv = (RangeVar *) lfirst(lc);
+
+			if (first_item)
+				first_item = false;
+			else
+				appendStringInfoString(&buf, ", ");
+			deparseStringLiteral(&buf, rv->relname);
+		}
+		appendStringInfoChar(&buf, ')');
+	}
+
+	/* Append ORDER BY at the end of query to ensure output ordering */
+	appendStringInfoString(&buf, " ORDER BY table_name, attnum");
+
+	/* Fetch the data */
+	elog(DEBUG2, "monetdb_fdw remote query is: \n%s", buf.data);
+	if ((hdl = mapi_query(conn, buf.data)) == NULL || mapi_error(conn))
+		die(conn, hdl);
+
+	/* Process results */
+	numrows = mapi_get_row_count(hdl);
+
+	/* Fetch first row */
+	if ((mapi_fetch_row(hdl)) == 0)
+		die(conn, hdl);
+
+	/* note: incrementation of i happens in inner loop's while() test */
+	for (i = 0; i < numrows;)
+	{
+		char	   *tablename = NULL;
+		bool		first_item = true;
+
+		tablename = mapi_fetch_field(hdl, 0);
+		resetStringInfo(&buf);
+		appendStringInfo(&buf, "CREATE FOREIGN TABLE %s (\n", quote_identifier(tablename));
+
+		/* Scan all rows for this table */
+		do
+		{
+			char	*attname 	= mapi_fetch_field(hdl, 1);
+			char	*typename 	= mapi_fetch_field(hdl, 2);
+			char	*attnotnull = mapi_fetch_field(hdl, 3);
+			char	*attdefault = mapi_fetch_field(hdl, 4);
+			char	*attispk 	= mapi_fetch_field(hdl, 5);
+
+			if (first_item)
+				first_item = false;
+			else
+				appendStringInfoString(&buf, ",\n");
+
+			/* Print column name and type */
+			appendStringInfo(&buf, "  %s %s",
+								quote_identifier(attname),
+								typename);
+
+			/* Add DEFAULT if needed */
+			if (attdefault != NULL)
+				appendStringInfo(&buf, " DEFAULT %s", attdefault);
+
+			/* part of the primary key */
+			if (attispk && attispk[0] == 't')
+				appendStringInfoString(&buf, " OPTIONS (key 'true') ");
+
+			/* Add NOT NULL if needed */
+			if (attnotnull[0] == 't')	
+				appendStringInfoString(&buf, " NOT NULL");
+
+		}
+		while (++i < numrows && (mapi_fetch_row(hdl)) &&
+				strcmp(mapi_fetch_field(hdl, 0), tablename) == 0);
+
+		/*
+		* Add server name and table-level options.  We specify remote
+		* schema and table name as options (the latter to ensure that
+		* renaming the foreign table doesn't break the association).
+		*/
+		appendStringInfo(&buf, "\n) SERVER %s\nOPTIONS (",
+							quote_identifier(server->servername));
+
+		appendStringInfoString(&buf, "schema_name ");
+		deparseStringLiteral(&buf, stmt->remote_schema);
+		appendStringInfoString(&buf, ", table_name ");
+		deparseStringLiteral(&buf, tablename);
+		appendStringInfoString(&buf, ");");
+
+		commands = lappend(commands, pstrdup(buf.data));
+		elog(DEBUG2, "postgres execute query is: \n%s", buf.data);
+	}
+
+	/* clear */
+	if (mapi_error(conn))
+		die(conn, hdl);
+	if (mapi_close_handle(hdl) != MOK)
+		die(conn, hdl);
+	mapi_destroy(conn);
+
+	return commands;
 }
 
 static void

@@ -6,6 +6,9 @@ CREATE USER MAPPING FOR CURRENT_USER SERVER foreign_server OPTIONS (user 'monetd
 SELECT monetdb_execute('foreign_server', $$DROP USER test_u$$);
 ERROR:  [MonetDB ERROR] DROP USER: no such user role 'test_u'
 
+SELECT monetdb_execute('foreign_server', $$DROP SCHEMA test_u$$);
+ERROR:  [MonetDB ERROR] DROP SCHEMA: name test_u does not exist
+
 SELECT monetdb_execute('foreign_server', $$CREATE USER "test_u" WITH PASSWORD 'test_u' NAME 'test_user' SCHEMA "sys"$$);
  monetdb_execute 
 -----------------
@@ -276,7 +279,159 @@ DEBUG:  monetdb_fdw remote query is: SELECT name, age FROM test_u.delete_emp
  Mary2 |  22
 (2 rows)
 
+DROP FOREIGN TABLE emp;
+DEBUG:  drop auto-cascades to type emp
+DEBUG:  drop auto-cascades to type emp[]
+DROP FOREIGN TABLE delete_emp;
+DEBUG:  drop auto-cascades to type delete_emp
+DEBUG:  drop auto-cascades to type delete_emp[]
+SELECT monetdb_execute('foreign_server', $$CREATE TABLE test_default(name VARCHAR(20) default 'zm', age INTEGER)$$);
+DEBUG:  monetdb: host: 127.0.0.1 port: 50000 user: test_u password: test_u dbname: test
+DEBUG:  monetdb_fdw remote query is: CREATE TABLE test_default(name VARCHAR(20) default 'zm', age INTEGER)
+ monetdb_execute 
+-----------------
+ 
+(1 row)
+
+-- test IMPORT FOREIGN SCHEMA
+IMPORT FOREIGN SCHEMA "test_u" from server foreign_server into public;
+DEBUG:  monetdb: host: 127.0.0.1 port: 50000 user: test_u password: test_u dbname: test
+DEBUG:  monetdb_fdw remote query is: SELECT 1 FROM sys.schemas WHERE name = 'test_u'
+DEBUG:  monetdb_fdw remote query is: 
+SELECT t.name as table_name, 
+  c.name as col_name, 
+  sys.sql_datatype(c.type, c.type_digits, c.type_scale, false, false) as type, 
+  CASE WHEN c."null" THEN 'false' ELSE 'true' END as expr, 
+  sys.ifthenelse(c."default" IS NOT NULL, c."default", NULL) as default_expr, 
+ (SELECT true FROM sys.objects kc, sys.keys k where kc.id = k.id and k.table_id = t.id and kc.name = c.name AND k.type = 0) AS pk, 
+ c.number as attnum 
+ FROM sys.tables t, sys.schemas s, sys.columns c  
+ WHERE t.schema_id = s.id 
+  AND t.type = 0 
+  AND c.table_id = t.id 
+  AND s.name = 'test_u' ORDER BY table_name, attnum
+DEBUG:  postgres execute query is: 
+CREATE FOREIGN TABLE delete_emp (
+  name CHARACTER VARYING(20) OPTIONS (key 'true')  NOT NULL,
+  age INTEGER
+) SERVER foreign_server
+OPTIONS (schema_name 'test_u', table_name 'delete_emp');
+DEBUG:  postgres execute query is: 
+CREATE FOREIGN TABLE emp (
+  name CHARACTER VARYING(20),
+  age INTEGER
+) SERVER foreign_server
+OPTIONS (schema_name 'test_u', table_name 'emp');
+DEBUG:  postgres execute query is: 
+CREATE FOREIGN TABLE test_default (
+  name CHARACTER VARYING(20) DEFAULT 'zm',
+  age INTEGER
+) SERVER foreign_server
+OPTIONS (schema_name 'test_u', table_name 'test_default');
+\dE
+                List of relations
+ Schema |     Name     |     Type      |  Owner   
+--------+--------------+---------------+----------
+ public | delete_emp   | foreign table | postgres
+ public | emp          | foreign table | postgres
+ public | test_default | foreign table | postgres
+(3 rows)
+
+SELECT * FROM emp;
+DEBUG:  monetdb: host: 127.0.0.1 port: 50000 user: test_u password: test_u dbname: test
+DEBUG:  monetdb_fdw remote query is: SELECT name, age FROM test_u.emp
+ name | age 
+------+-----
+ John |  23
+ Mary |  22
+(2 rows)
+
+SELECT * FROM delete_emp;
+DEBUG:  monetdb: host: 127.0.0.1 port: 50000 user: test_u password: test_u dbname: test
+DEBUG:  monetdb_fdw remote query is: SELECT name, age FROM test_u.delete_emp
+ name  | age 
+-------+-----
+ John2 |  23
+ Mary2 |  22
+(2 rows)
+
+EXPLAIN VERBOSE INSERT INTO test_default(age) values(22);
+DEBUG:  monetdb: host: 127.0.0.1 port: 50000 user: test_u password: test_u dbname: test
+                                  QUERY PLAN                                   
+-------------------------------------------------------------------------------
+ Insert on public.test_default  (cost=0.00..0.01 rows=0 width=0)
+   MonetDB statement: INSERT INTO test_u.test_default(name, age) VALUES (?, ?)
+   ->  Result  (cost=0.00..0.01 rows=1 width=62)
+         Output: 'zm'::character varying(20), 22
+(4 rows)
+
+INSERT INTO test_default(age) values(22);
+DEBUG:  monetdb: host: 127.0.0.1 port: 50000 user: test_u password: test_u dbname: test
+DEBUG:  monetdb_fdw remote prepare query is: INSERT INTO test_u.test_default(name, age) VALUES (?, ?)
+DEBUG:  monetdb_fdw bind value0: zm
+DEBUG:  monetdb_fdw bind value1: 22
+SELECT * FROM test_default;
+DEBUG:  monetdb: host: 127.0.0.1 port: 50000 user: test_u password: test_u dbname: test
+DEBUG:  monetdb_fdw remote query is: SELECT name, age FROM test_u.test_default
+ name | age 
+------+-----
+ zm   |  22
+(1 row)
+
+DROP FOREIGN TABLE test_default;
+DEBUG:  drop auto-cascades to type test_default
+DEBUG:  drop auto-cascades to type test_default[]
+DEBUG:  drop auto-cascades to default value for column name of foreign table test_default
+-- test IMPORT FOREIGN SCHEMA ... LIMIT TO
+IMPORT FOREIGN SCHEMA "test_u" limit to (test_default) from server foreign_server into public;
+DEBUG:  monetdb: host: 127.0.0.1 port: 50000 user: test_u password: test_u dbname: test
+DEBUG:  monetdb_fdw remote query is: SELECT 1 FROM sys.schemas WHERE name = 'test_u'
+DEBUG:  monetdb_fdw remote query is: 
+SELECT t.name as table_name, 
+  c.name as col_name, 
+  sys.sql_datatype(c.type, c.type_digits, c.type_scale, false, false) as type, 
+  CASE WHEN c."null" THEN 'false' ELSE 'true' END as expr, 
+  sys.ifthenelse(c."default" IS NOT NULL, c."default", NULL) as default_expr, 
+ (SELECT true FROM sys.objects kc, sys.keys k where kc.id = k.id and k.table_id = t.id and kc.name = c.name AND k.type = 0) AS pk, 
+ c.number as attnum 
+ FROM sys.tables t, sys.schemas s, sys.columns c  
+ WHERE t.schema_id = s.id 
+  AND t.type = 0 
+  AND c.table_id = t.id 
+  AND s.name = 'test_u' AND t.name IN ('test_default') ORDER BY table_name, attnum
+DEBUG:  postgres execute query is: 
+CREATE FOREIGN TABLE test_default (
+  name CHARACTER VARYING(20) DEFAULT 'zm',
+  age INTEGER
+) SERVER foreign_server
+OPTIONS (schema_name 'test_u', table_name 'test_default');
+\d+ test_default
+                                                  Foreign table "public.test_default"
+ Column |         Type          | Collation | Nullable |         Default         | FDW options | Storage  | Stats target | Description 
+--------+-----------------------+-----------+----------+-------------------------+-------------+----------+--------------+-------------
+ name   | character varying(20) |           |          | 'zm'::character varying |             | extended |              | 
+ age    | integer               |           |          |                         |             | plain    |              | 
+Server: foreign_server
+FDW options: (schema_name 'test_u', table_name 'test_default')
+
+SELECT * FROM test_default;
+DEBUG:  monetdb: host: 127.0.0.1 port: 50000 user: test_u password: test_u dbname: test
+DEBUG:  monetdb_fdw remote query is: SELECT name, age FROM test_u.test_default
+ name | age 
+------+-----
+ zm   |  22
+(1 row)
+
 set client_min_messages = 'INFO';
+DROP FOREIGN TABLE emp;
+DROP FOREIGN TABLE delete_emp;
+DROP FOREIGN TABLE test_default;
+SELECT monetdb_execute('foreign_server', $$DROP TABLE test_default$$);
+ monetdb_execute 
+-----------------
+ 
+(1 row)
+
 SELECT monetdb_execute('foreign_server', $$DROP TABLE delete_emp$$);
  monetdb_execute 
 -----------------
