@@ -57,7 +57,7 @@ FDW options: (schema_name 'test_u', table_name 'emp')
 -- test insert 
 INSERT INTO emp VALUES('John', 23);
 INSERT INTO emp VALUES('Mary', 22);
--- test selectt
+-- test select
 SELECT * FROM emp;
  name | age 
 ------+-----
@@ -155,17 +155,17 @@ SELECT * FROM delete_emp;
 
 set client_min_messages = 'debug2';
 INSERT INTO emp VALUES('John', 23);
-DEBUG:  monetdb: host 127.0.0.1 port 50000 user test_u password test_u dbname test
+DEBUG:  monetdb: host: 127.0.0.1 port: 50000 user: test_u password: test_u dbname: test
 DEBUG:  monetdb_fdw remote prepare query is: INSERT INTO test_u.emp(name, age) VALUES (?, ?)
 DEBUG:  monetdb_fdw bind value0: John
 DEBUG:  monetdb_fdw bind value1: 23
 INSERT INTO emp VALUES('Mary', 22);
-DEBUG:  monetdb: host 127.0.0.1 port 50000 user test_u password test_u dbname test
+DEBUG:  monetdb: host: 127.0.0.1 port: 50000 user: test_u password: test_u dbname: test
 DEBUG:  monetdb_fdw remote prepare query is: INSERT INTO test_u.emp(name, age) VALUES (?, ?)
 DEBUG:  monetdb_fdw bind value0: Mary
 DEBUG:  monetdb_fdw bind value1: 22
 SELECT * FROM emp;
-DEBUG:  monetdb: host 127.0.0.1 port 50000 user test_u password test_u dbname test
+DEBUG:  monetdb: host: 127.0.0.1 port: 50000 user: test_u password: test_u dbname: test
 DEBUG:  monetdb_fdw remote query is: SELECT name, age FROM test_u.emp
  name | age 
 ------+-----
@@ -174,17 +174,17 @@ DEBUG:  monetdb_fdw remote query is: SELECT name, age FROM test_u.emp
 (2 rows)
 
 INSERT INTO delete_emp VALUES('John', 23);
-DEBUG:  monetdb: host 127.0.0.1 port 50000 user test_u password test_u dbname test
+DEBUG:  monetdb: host: 127.0.0.1 port: 50000 user: test_u password: test_u dbname: test
 DEBUG:  monetdb_fdw remote prepare query is: INSERT INTO test_u.delete_emp(name, age) VALUES (?, ?)
 DEBUG:  monetdb_fdw bind value0: John
 DEBUG:  monetdb_fdw bind value1: 23
 INSERT INTO delete_emp VALUES('Mary', 22);
-DEBUG:  monetdb: host 127.0.0.1 port 50000 user test_u password test_u dbname test
+DEBUG:  monetdb: host: 127.0.0.1 port: 50000 user: test_u password: test_u dbname: test
 DEBUG:  monetdb_fdw remote prepare query is: INSERT INTO test_u.delete_emp(name, age) VALUES (?, ?)
 DEBUG:  monetdb_fdw bind value0: Mary
 DEBUG:  monetdb_fdw bind value1: 22
 SELECT * FROM delete_emp;
-DEBUG:  monetdb: host 127.0.0.1 port 50000 user test_u password test_u dbname test
+DEBUG:  monetdb: host: 127.0.0.1 port: 50000 user: test_u password: test_u dbname: test
 DEBUG:  monetdb_fdw remote query is: SELECT name, age FROM test_u.delete_emp
  name | age 
 ------+-----
@@ -197,14 +197,14 @@ UPDATE emp SET name = 'Mary2' WHERE name = 'Mary'; -- error
 ERROR:  no primary key column specified for foreign MonetDB table
 DETAIL:  For UPDATE or DELETE, at least one foreign table column must be marked as primary key column.
 UPDATE delete_emp SET name = 'Mary2' WHERE name = 'Mary'; -- ok
-DEBUG:  monetdb: host 127.0.0.1 port 50000 user test_u password test_u dbname test
-DEBUG:  monetdb: host 127.0.0.1 port 50000 user test_u password test_u dbname test
+DEBUG:  monetdb: host: 127.0.0.1 port: 50000 user: test_u password: test_u dbname: test
+DEBUG:  monetdb: host: 127.0.0.1 port: 50000 user: test_u password: test_u dbname: test
 DEBUG:  monetdb_fdw remote query is: SELECT name, age FROM test_u.delete_emp WHERE ((name = 'Mary')) /* FOR UPDATE */
 DEBUG:  monetdb_fdw remote prepare query is: UPDATE test_u.delete_emp SET name = ? WHERE name = ?
 DEBUG:  monetdb_fdw bind value0: Mary2
 DEBUG:  monetdb_fdw bind value1: Mary
 SELECT * FROM delete_emp;
-DEBUG:  monetdb: host 127.0.0.1 port 50000 user test_u password test_u dbname test
+DEBUG:  monetdb: host: 127.0.0.1 port: 50000 user: test_u password: test_u dbname: test
 DEBUG:  monetdb_fdw remote query is: SELECT name, age FROM test_u.delete_emp
  name  | age 
 -------+-----
@@ -213,14 +213,14 @@ DEBUG:  monetdb_fdw remote query is: SELECT name, age FROM test_u.delete_emp
 (2 rows)
 
 UPDATE delete_emp SET name = 'John2' WHERE age = 23; 
-DEBUG:  monetdb: host 127.0.0.1 port 50000 user test_u password test_u dbname test
-DEBUG:  monetdb: host 127.0.0.1 port 50000 user test_u password test_u dbname test
+DEBUG:  monetdb: host: 127.0.0.1 port: 50000 user: test_u password: test_u dbname: test
+DEBUG:  monetdb: host: 127.0.0.1 port: 50000 user: test_u password: test_u dbname: test
 DEBUG:  monetdb_fdw remote query is: SELECT name, age FROM test_u.delete_emp WHERE ((age = 23)) /* FOR UPDATE */
 DEBUG:  monetdb_fdw remote prepare query is: UPDATE test_u.delete_emp SET name = ? WHERE name = ?
 DEBUG:  monetdb_fdw bind value0: John2
 DEBUG:  monetdb_fdw bind value1: John
 SELECT * FROM delete_emp;
-DEBUG:  monetdb: host 127.0.0.1 port 50000 user test_u password test_u dbname test
+DEBUG:  monetdb: host: 127.0.0.1 port: 50000 user: test_u password: test_u dbname: test
 DEBUG:  monetdb_fdw remote query is: SELECT name, age FROM test_u.delete_emp
  name  | age 
 -------+-----
@@ -230,7 +230,7 @@ DEBUG:  monetdb_fdw remote query is: SELECT name, age FROM test_u.delete_emp
 
 -- test returning
 INSERT INTO delete_emp VALUES('John', 23) RETURNING *;
-DEBUG:  monetdb: host 127.0.0.1 port 50000 user test_u password test_u dbname test
+DEBUG:  monetdb: host: 127.0.0.1 port: 50000 user: test_u password: test_u dbname: test
 DEBUG:  monetdb_fdw remote prepare query is: INSERT INTO test_u.delete_emp(name, age) VALUES (?, ?) RETURNING name, age
 DEBUG:  monetdb_fdw bind value0: John
 DEBUG:  monetdb_fdw bind value1: 23
@@ -240,8 +240,8 @@ DEBUG:  monetdb_fdw bind value1: 23
 (1 row)
 
 DELETE FROM delete_emp WHERE name = 'John' RETURNING *;
-DEBUG:  monetdb: host 127.0.0.1 port 50000 user test_u password test_u dbname test
-DEBUG:  monetdb: host 127.0.0.1 port 50000 user test_u password test_u dbname test
+DEBUG:  monetdb: host: 127.0.0.1 port: 50000 user: test_u password: test_u dbname: test
+DEBUG:  monetdb: host: 127.0.0.1 port: 50000 user: test_u password: test_u dbname: test
 DEBUG:  monetdb_fdw remote query is: SELECT name FROM test_u.delete_emp WHERE ((name = 'John')) /* FOR UPDATE */
 DEBUG:  monetdb_fdw remote prepare query is: DELETE FROM test_u.delete_emp WHERE name = ? RETURNING name, age
 DEBUG:  monetdb_fdw bind value0: John
@@ -251,7 +251,7 @@ DEBUG:  monetdb_fdw bind value0: John
 (1 row)
 
 SELECT * FROM delete_emp;
-DEBUG:  monetdb: host 127.0.0.1 port 50000 user test_u password test_u dbname test
+DEBUG:  monetdb: host: 127.0.0.1 port: 50000 user: test_u password: test_u dbname: test
 DEBUG:  monetdb_fdw remote query is: SELECT name, age FROM test_u.delete_emp
  name  | age 
 -------+-----
@@ -260,15 +260,15 @@ DEBUG:  monetdb_fdw remote query is: SELECT name, age FROM test_u.delete_emp
 (2 rows)
 
 UPDATE delete_emp SET name = 'Mary' WHERE name = 'Mary2' RETURNING *; -- error, MonetDB "UPDATE ... RETURNING" has bug
-DEBUG:  monetdb: host 127.0.0.1 port 50000 user test_u password test_u dbname test
-DEBUG:  monetdb: host 127.0.0.1 port 50000 user test_u password test_u dbname test
+DEBUG:  monetdb: host: 127.0.0.1 port: 50000 user: test_u password: test_u dbname: test
+DEBUG:  monetdb: host: 127.0.0.1 port: 50000 user: test_u password: test_u dbname: test
 DEBUG:  monetdb_fdw remote query is: SELECT name, age FROM test_u.delete_emp WHERE ((name = 'Mary2')) /* FOR UPDATE */
 DEBUG:  monetdb_fdw remote prepare query is: UPDATE test_u.delete_emp SET name = ? WHERE name = ? RETURNING name, age
 DEBUG:  monetdb_fdw bind value0: Mary
 DEBUG:  monetdb_fdw bind value1: Mary2
 ERROR:  [MonetDB ERROR] (null)
 SELECT * FROM delete_emp;
-DEBUG:  monetdb: host 127.0.0.1 port 50000 user test_u password test_u dbname test
+DEBUG:  monetdb: host: 127.0.0.1 port: 50000 user: test_u password: test_u dbname: test
 DEBUG:  monetdb_fdw remote query is: SELECT name, age FROM test_u.delete_emp
  name  | age 
 -------+-----

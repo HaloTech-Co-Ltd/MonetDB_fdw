@@ -1450,7 +1450,7 @@ MonetDB_BeginForeignScan(ForeignScanState *node, int eflags)
 	}
 	list_free(options);
 	
-	elog(DEBUG2, "monetdb: host %s port %s user %s password %s dbname %s", host, port, user_str, password, dbname);
+	elog(DEBUG2, "monetdb: host: %s port: %s user: %s password: %s dbname: %s", host, port, user_str, password, dbname);
 	/*
 	 * Get connection to the foreign server.  Connection manager will
 	 * establish new connection if necessary.
@@ -1849,7 +1849,7 @@ MonetDB_ExecForeignInsert(EState *estate,
 
 	/*
 	 * If the fmstate has aux_fmstate set, use the aux_fmstate (see
-	 * postgresBeginForeignInsert())
+	 * MonetDB_BeginForeignInsert())
 	 */
 	if (fmstate->aux_fmstate)
 		resultRelInfo->ri_FdwState = fmstate->aux_fmstate;
@@ -2328,7 +2328,7 @@ MonetDB_ExecForeignTruncate(List *rels,
 	}
 	list_free(options);
 	
-	elog(DEBUG2, "monetdb: host %s port %s user %s password %s dbname %s", host, port, user_str, password, dbname);
+	elog(DEBUG2, "monetdb: host: %s port: %s user: %s password: %s dbname: %s", host, port, user_str, password, dbname);
 	/* Construct the TRUNCATE command string */
 	initStringInfo(&sql);
 	deparseTruncateSql(&sql, rels, behavior, restart_seqs);
@@ -4548,7 +4548,7 @@ static MonetdbFdwModifyState *create_foreign_modify(EState *estate,
 	}
 	list_free(options);
 	
-	elog(DEBUG2, "monetdb: host %s port %s user %s password %s dbname %s", host, port, user_str, password, dbname);
+	elog(DEBUG2, "monetdb: host: %s port: %s user: %s password: %s dbname: %s", host, port, user_str, password, dbname);
 	/*
 	 * Get connection to the foreign server.  Connection manager will
 	 * establish new connection if necessary.
@@ -4927,7 +4927,7 @@ monetdb_execute(PG_FUNCTION_ARGS)
 	}
 	list_free(options);
 	
-	elog(DEBUG2, "monetdb: host %s port %s user %s password %s dbname %s", host, port, user_str, password, dbname);
+	elog(DEBUG2, "monetdb: host: %s port: %s user: %s password: %s dbname: %s", host, port, user_str, password, dbname);
 	elog(DEBUG2, "monetdb_fdw remote query is: %s", stmt);
 	conn = mapi_connect(host, atoi(port), user_str, password, "sql", dbname);
 	if ((hdl = mapi_query(conn, stmt)) == NULL || mapi_error(conn))

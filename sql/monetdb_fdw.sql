@@ -31,7 +31,7 @@ OPTIONS (schema_name 'test_u', table_name 'emp');
 INSERT INTO emp VALUES('John', 23);
 INSERT INTO emp VALUES('Mary', 22);
 
--- test selectt
+-- test select
 SELECT * FROM emp;
 SELECT monetdb_execute('foreign_server', $$SELECT * FROM emp$$);
 
