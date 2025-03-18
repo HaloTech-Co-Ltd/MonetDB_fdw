@@ -59,14 +59,14 @@
 
 PG_MODULE_MAGIC;
 
-#define die(dbh,hdl)											\
-			do {												\
-				if (hdl)										\
-					elog(ERROR, "%s", mapi_result_error(hdl)); 	\
-				else if (dbh)									\
-					elog(ERROR, "%s", mapi_error_str(dbh));		\
-				else											\
-					elog(ERROR, "command failed\n"); 			\
+#define die(dbh,hdl)																\
+			do {																	\
+				if (hdl)															\
+					elog(ERROR, "[MonetDB ERROR] %s", mapi_result_error(hdl)); 	\
+				else if (dbh)														\
+					elog(ERROR, "[MonetDB ERROR] %s", mapi_error_str(dbh));			\
+				else																\
+					elog(ERROR, "command failed\n"); 								\
 			} while (0)
 
 /* Default CPU cost to start up a foreign query. */

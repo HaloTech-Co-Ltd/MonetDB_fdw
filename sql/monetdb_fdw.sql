@@ -87,6 +87,13 @@ SELECT * FROM delete_emp;
 UPDATE delete_emp SET name = 'John2' WHERE age = 23; 
 SELECT * FROM delete_emp;
 
+-- test returning
+INSERT INTO delete_emp VALUES('John', 23) RETURNING *;
+DELETE FROM delete_emp WHERE name = 'John' RETURNING *;
+SELECT * FROM delete_emp;
+UPDATE delete_emp SET name = 'Mary' WHERE name = 'Mary2' RETURNING *; -- error, MonetDB "UPDATE ... RETURNING" has bug
+SELECT * FROM delete_emp;
+
 set client_min_messages = 'INFO';
 SELECT monetdb_execute('foreign_server', $$DROP TABLE delete_emp$$);
 SELECT monetdb_execute('foreign_server', $$DROP TABLE emp$$);

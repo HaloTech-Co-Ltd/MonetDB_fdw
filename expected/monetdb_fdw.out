@@ -4,7 +4,7 @@ CREATE SERVER foreign_server FOREIGN DATA WRAPPER monetdb_fdw
 OPTIONS (host '127.0.0.1', port '50000', dbname 'test');
 CREATE USER MAPPING FOR CURRENT_USER SERVER foreign_server OPTIONS (user 'monetdb', password 'monetdb');
 SELECT monetdb_execute('foreign_server', $$DROP USER test_u$$);
-ERROR:  DROP USER: no such user role 'test_u'
+ERROR:  [MonetDB ERROR] DROP USER: no such user role 'test_u'
 
 SELECT monetdb_execute('foreign_server', $$CREATE USER "test_u" WITH PASSWORD 'test_u' NAME 'test_user' SCHEMA "sys"$$);
  monetdb_execute 
@@ -123,7 +123,7 @@ SELECT * FROM delete_emp;
 (2 rows)
 
 INSERT INTO delete_emp VALUES('Mary', 22); -- error
-ERROR:  INSERT INTO: PRIMARY KEY constraint 'delete_emp.delete_emp_name_pkey' violated
+ERROR:  [MonetDB ERROR] INSERT INTO: PRIMARY KEY constraint 'delete_emp.delete_emp_name_pkey' violated
 
 INSERT INTO delete_emp VALUES('Mary2', 22);
 SELECT * FROM delete_emp;
@@ -219,6 +219,54 @@ DEBUG:  monetdb_fdw remote query is: SELECT name, age FROM test_u.delete_emp WHE
 DEBUG:  monetdb_fdw remote prepare query is: UPDATE test_u.delete_emp SET name = ? WHERE name = ?
 DEBUG:  monetdb_fdw bind value0: John2
 DEBUG:  monetdb_fdw bind value1: John
+SELECT * FROM delete_emp;
+DEBUG:  monetdb: host 127.0.0.1 port 50000 user test_u password test_u dbname test
+DEBUG:  monetdb_fdw remote query is: SELECT name, age FROM test_u.delete_emp
+ name  | age 
+-------+-----
+ John2 |  23
+ Mary2 |  22
+(2 rows)
+
+-- test returning
+INSERT INTO delete_emp VALUES('John', 23) RETURNING *;
+DEBUG:  monetdb: host 127.0.0.1 port 50000 user test_u password test_u dbname test
+DEBUG:  monetdb_fdw remote prepare query is: INSERT INTO test_u.delete_emp(name, age) VALUES (?, ?) RETURNING name, age
+DEBUG:  monetdb_fdw bind value0: John
+DEBUG:  monetdb_fdw bind value1: 23
+ name | age 
+------+-----
+ John |  23
+(1 row)
+
+DELETE FROM delete_emp WHERE name = 'John' RETURNING *;
+DEBUG:  monetdb: host 127.0.0.1 port 50000 user test_u password test_u dbname test
+DEBUG:  monetdb: host 127.0.0.1 port 50000 user test_u password test_u dbname test
+DEBUG:  monetdb_fdw remote query is: SELECT name FROM test_u.delete_emp WHERE ((name = 'John')) /* FOR UPDATE */
+DEBUG:  monetdb_fdw remote prepare query is: DELETE FROM test_u.delete_emp WHERE name = ? RETURNING name, age
+DEBUG:  monetdb_fdw bind value0: John
+ name | age 
+------+-----
+ John |  23
+(1 row)
+
+SELECT * FROM delete_emp;
+DEBUG:  monetdb: host 127.0.0.1 port 50000 user test_u password test_u dbname test
+DEBUG:  monetdb_fdw remote query is: SELECT name, age FROM test_u.delete_emp
+ name  | age 
+-------+-----
+ John2 |  23
+ Mary2 |  22
+(2 rows)
+
+UPDATE delete_emp SET name = 'Mary' WHERE name = 'Mary2' RETURNING *; -- error, MonetDB "UPDATE ... RETURNING" has bug
+DEBUG:  monetdb: host 127.0.0.1 port 50000 user test_u password test_u dbname test
+DEBUG:  monetdb: host 127.0.0.1 port 50000 user test_u password test_u dbname test
+DEBUG:  monetdb_fdw remote query is: SELECT name, age FROM test_u.delete_emp WHERE ((name = 'Mary2')) /* FOR UPDATE */
+DEBUG:  monetdb_fdw remote prepare query is: UPDATE test_u.delete_emp SET name = ? WHERE name = ? RETURNING name, age
+DEBUG:  monetdb_fdw bind value0: Mary
+DEBUG:  monetdb_fdw bind value1: Mary2
+ERROR:  [MonetDB ERROR] (null)
 SELECT * FROM delete_emp;
 DEBUG:  monetdb: host 127.0.0.1 port 50000 user test_u password test_u dbname test
 DEBUG:  monetdb_fdw remote query is: SELECT name, age FROM test_u.delete_emp

@@ -49,9 +49,13 @@ SERVER foreign_server
 OPTIONS (schema_name 'zm', table_name 'emp');
 ```
 
-#### 限制
+#### 支持语句
 
-MonetDB_fdw暂时仅支持INSERT、DELETE、UPDATE、SELECT、TRUNCATE和EXPLAIN语句。
+MonetDB_fdw支持INSERT、DELETE、UPDATE、SELECT、TRUNCATE和EXPLAIN语句。
+
+以及相关的RETURNING语句，有趣的是MonetDB的UPDATE ... RETURNING似乎存在BUG。
+
+#### 限制
 
 由于是参考了Oracle_fdw来实现的功能，所以当使用DELETE、UPDATE语句时，要求远端MonetDB的表中存在主键，
 
