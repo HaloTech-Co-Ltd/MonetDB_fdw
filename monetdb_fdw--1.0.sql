@@ -20,3 +20,7 @@ IS 'executes an arbitrary SQL statement with no results on the MonetDB server';
 
 -- TINYINT
 CREATE DOMAIN TINYINT AS SMALLINT CHECK(VALUE >= -127 AND VALUE <= 127);
+-- CLOB
+CREATE DOMAIN CLOB AS VARCHAR;
+-- STRING
+CREATE DOMAIN STRING AS VARCHAR;

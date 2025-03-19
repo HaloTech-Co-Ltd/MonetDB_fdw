@@ -139,6 +139,101 @@ SELECT monetdb_execute('foreign_server', $$DROP TABLE Numeric_Types$$);
  
 (1 row)
 
+select monetdb_execute('foreign_server', $$CREATE TABLE Character_Types(
+	a CHAR,
+	b CHARACTER(10),
+	c VARCHAR(20),
+	d VARCHAR,
+	e CLOB,
+	f TEXT,  -- The TEXT type of the external table imported using IMPORT is not the TEXT type of PostgrSQL
+	g STRING,
+	h CLOB(10),
+	i TEXT(20),
+	j STRING(30) 
+)$$);
+ monetdb_execute 
+-----------------
+ 
+(1 row)
+
+IMPORT FOREIGN SCHEMA "test_u" limit to (Character_Types) from server foreign_server into public; 
+\d+ Character_Types
+                                        Foreign table "public.character_types"
+ Column |         Type          | Collation | Nullable | Default | FDW options | Storage  | Stats target | Description 
+--------+-----------------------+-----------+----------+---------+-------------+----------+--------------+-------------
+ a      | character(1)          |           |          |         |             | extended |              | 
+ b      | character(10)         |           |          |         |             | extended |              | 
+ c      | character varying(20) |           |          |         |             | extended |              | 
+ d      | character varying     |           |          |         |             | extended |              | 
+ e      | character varying     |           |          |         |             | extended |              | 
+ f      | character varying     |           |          |         |             | extended |              | 
+ g      | character varying     |           |          |         |             | extended |              | 
+ h      | character varying(10) |           |          |         |             | extended |              | 
+ i      | character varying(20) |           |          |         |             | extended |              | 
+ j      | character varying(30) |           |          |         |             | extended |              | 
+Server: foreign_server
+FDW options: (schema_name 'test_u', table_name 'character_types')
+
+-- In fact, CLOB, TEXT, and STRING with precision information are not supported
+CREATE TABLE Character_Types2(
+	e CLOB,
+	f TEXT,
+	g STRING
+);
+DROP TABLE Character_Types2;
+-- 
+CREATE TABLE Character_Types2(h CLOB(10));      -- error
+ERROR:  type modifier is not allowed for type "clob"
+LINE 1: CREATE TABLE Character_Types2(h CLOB(10));
+                                        ^
+CREATE TABLE Character_Types2(i TEXT(20));      -- error
+ERROR:  type modifier is not allowed for type "text"
+LINE 1: CREATE TABLE Character_Types2(i TEXT(20));
+                                        ^
+CREATE TABLE Character_Types2(j STRING(30));    -- error
+ERROR:  type modifier is not allowed for type "string"
+LINE 1: CREATE TABLE Character_Types2(j STRING(30));
+                                        ^
+DROP FOREIGN TABLE Character_Types;
+-- Create an external table with the following PG types
+CREATE FOREIGN TABLE Character_Types(
+	a CHAR,
+	b CHARACTER(10),
+	c VARCHAR(20),
+	d VARCHAR,
+	e CLOB,
+	f TEXT,
+	g STRING,
+	h VARCHAR(10),
+	i VARCHAR(20),
+	j VARCHAR(30) 
+)
+SERVER foreign_server
+OPTIONS (schema_name 'test_u', table_name 'Character_Types');
+\d+ Character_Types
+                                        Foreign table "public.character_types"
+ Column |         Type          | Collation | Nullable | Default | FDW options | Storage  | Stats target | Description 
+--------+-----------------------+-----------+----------+---------+-------------+----------+--------------+-------------
+ a      | character(1)          |           |          |         |             | extended |              | 
+ b      | character(10)         |           |          |         |             | extended |              | 
+ c      | character varying(20) |           |          |         |             | extended |              | 
+ d      | character varying     |           |          |         |             | extended |              | 
+ e      | clob                  |           |          |         |             | extended |              | 
+ f      | text                  |           |          |         |             | extended |              | 
+ g      | string                |           |          |         |             | extended |              | 
+ h      | character varying(10) |           |          |         |             | extended |              | 
+ i      | character varying(20) |           |          |         |             | extended |              | 
+ j      | character varying(30) |           |          |         |             | extended |              | 
+Server: foreign_server
+FDW options: (schema_name 'test_u', table_name 'Character_Types')
+
+DROP FOREIGN TABLE Character_Types;
+SELECT monetdb_execute('foreign_server', $$DROP TABLE Character_Types$$);
+ monetdb_execute 
+-----------------
+ 
+(1 row)
+
 SELECT monetdb_execute('foreign_server', $$ALTER USER test_u SET SCHEMA sys$$);
  monetdb_execute 
 -----------------
