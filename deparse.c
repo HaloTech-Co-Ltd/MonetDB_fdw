@@ -2056,9 +2056,10 @@ deparseUpdateSql(StringInfo buf, RangeTblEntry *rte,
 	bool		first;
 	ListCell   *lc;
 
-	char		*attrName = NULL;
 	Oid 		relid   = RelationGetRelid(rel);
-
+	bool		has_key = false;
+	StringInfoData where_expr;
+	initStringInfo(&where_expr);
 	/* loop through all columns of the foreign table */
 	for (int i = 0; i < tupdesc->natts; ++i)
 	{
@@ -2074,13 +2075,18 @@ deparseUpdateSql(StringInfo buf, RangeTblEntry *rte,
 			/* if "key" is set, add a resjunk for this column */
 			if (strcmp(def->defname, OPT_KEY) == 0 && getBoolVal(def))
 			{
-				attrName = pstrdup(NameStr(att->attname));
-				break;
+				if (!has_key)
+				{
+					has_key = true;
+					appendStringInfo(&where_expr, " WHERE %s = ?", pstrdup(NameStr(att->attname)));
+					continue;
+				}
+				appendStringInfo(&where_expr, " AND %s = ?", pstrdup(NameStr(att->attname)));
 			}
 		}
 	}
 
-	if (!attrName)
+	if (!has_key)
 		ereport(ERROR,
 			(errcode(ERRCODE_FDW_UNABLE_TO_CREATE_EXECUTION),
 				errmsg("no primary key column specified for foreign MonetDB table"),
@@ -2106,11 +2112,12 @@ deparseUpdateSql(StringInfo buf, RangeTblEntry *rte,
 		else
 			appendStringInfoString(buf, " = ?");
 	}
-	appendStringInfo(buf, " WHERE %s = ?", attrName);
+	appendStringInfoString(buf, where_expr.data);
 
 	deparseReturningList(buf, rte, rtindex, rel,
 						 rel->trigdesc && rel->trigdesc->trig_update_after_row,
 						 withCheckOptionList, returningList, retrieved_attrs);
+	pfree(where_expr.data);
 }
 
 /*
@@ -2221,45 +2228,52 @@ deparseDeleteSql(StringInfo buf, RangeTblEntry *rte,
 				 List *returningList,
 				 List **retrieved_attrs)
 {
-		char		*attrName = NULL;
-		Oid 		relid   = RelationGetRelid(rel);
-		TupleDesc 	tupdesc = rel->rd_att;
+	bool		has_key = false;
+	StringInfoData where_expr;
+	Oid 		relid   = RelationGetRelid(rel);
+	TupleDesc 	tupdesc = rel->rd_att;
 
-		/* loop through all columns of the foreign table */
-		for (int i = 0; i < tupdesc->natts; ++i)
+	initStringInfo(&where_expr);
+	/* loop through all columns of the foreign table */
+	for (int i = 0; i < tupdesc->natts; ++i)
+	{
+		Form_pg_attribute att = TupleDescAttr(tupdesc, i);
+		ListCell 	*option;
+
+		/* look for the "key" option on this column */
+		List 	*option_list = GetForeignColumnOptions(relid, att->attnum);
+		foreach(option, option_list)
 		{
-			Form_pg_attribute att = TupleDescAttr(tupdesc, i);
-			ListCell 	*option;
+			DefElem *def = (DefElem *)lfirst(option);
 
-			/* look for the "key" option on this column */
-			List 	*option_list = GetForeignColumnOptions(relid, att->attnum);
-			foreach(option, option_list)
+			/* if "key" is set, add a resjunk for this column */
+			if (strcmp(def->defname, OPT_KEY) == 0 && getBoolVal(def))
 			{
-				DefElem *def = (DefElem *)lfirst(option);
-
-				/* if "key" is set, add a resjunk for this column */
-				if (strcmp(def->defname, OPT_KEY) == 0 && getBoolVal(def))
+				if (!has_key)
 				{
-					attrName = pstrdup(NameStr(att->attname));
-					break;
+					has_key = true;
+					appendStringInfo(&where_expr, " WHERE %s = ?", pstrdup(NameStr(att->attname)));
+					continue;
 				}
+				appendStringInfo(&where_expr, " AND %s = ?", pstrdup(NameStr(att->attname)));
 			}
 		}
+	}
 
-		if (!attrName)
-			ereport(ERROR,
-				(errcode(ERRCODE_FDW_UNABLE_TO_CREATE_EXECUTION),
-					errmsg("no primary key column specified for foreign MonetDB table"),
-					errdetail("For UPDATE or DELETE, at least one foreign table column must be marked as primary key column.")));
+	if (!has_key)
+		ereport(ERROR,
+			(errcode(ERRCODE_FDW_UNABLE_TO_CREATE_EXECUTION),
+				errmsg("no primary key column specified for foreign MonetDB table"),
+				errdetail("For UPDATE or DELETE, at least one foreign table column must be marked as primary key column.")));
 
 	appendStringInfoString(buf, "DELETE FROM ");
 	deparseRelation(buf, rel);
-	appendStringInfo(buf, " WHERE %s = ?", attrName); 
+	appendStringInfoString(buf, where_expr.data); 
 
 	deparseReturningList(buf, rte, rtindex, rel,
 						 rel->trigdesc && rel->trigdesc->trig_delete_after_row,
 						 NIL, returningList, retrieved_attrs);
-	pfree(attrName);
+	pfree(where_expr.data);
 }
 
 /*

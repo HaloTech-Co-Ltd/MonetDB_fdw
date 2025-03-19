@@ -212,10 +212,10 @@ typedef struct MonetdbFdwModifyState
 	List	   *retrieved_attrs;	/* attr numbers retrieved by RETURNING */
 
 	/* info about parameters for prepared statement */
-	AttrNumber	keyAttno;		/* attnum of input resjunk key column */
 	int			p_nums;			/* number of parameters to transmit */
 	FmgrInfo   *p_flinfo;		/* output conversion functions for them */
-
+	List	   *key_attnums;		/* attnum of input resjunk key column */
+	FmgrInfo   *key_flinfo;
 	/* batch operation stuff */
 	int			num_slots;		/* number of slots to insert */
 
@@ -445,7 +445,7 @@ static TupleTableSlot **execute_foreign_modify(EState *estate,
 												TupleTableSlot **planSlots,
 												int *numSlots);
 static const char **convert_prep_stmt_params(MonetdbFdwModifyState *fmstate,
-													ItemPointer tupleid,
+													List *tupleid_keys,
 													TupleTableSlot **slots,
 													int numSlots);
 
@@ -4788,18 +4788,18 @@ static MonetdbFdwModifyState *create_foreign_modify(EState *estate,
 	if (fmstate->has_returning)
 		fmstate->attinmeta = TupleDescGetAttInMetadata(tupdesc);
 
-	/* Prepare for output conversion of parameters used in prepared stmt. */
-	n_params = list_length(fmstate->target_attrs) + 1;
-	fmstate->p_flinfo = (FmgrInfo *) palloc0(sizeof(FmgrInfo) * n_params);
 	fmstate->p_nums = 0;
-
 	if (operation == CMD_UPDATE || operation == CMD_DELETE)
 	{
 		char		*attrName = NULL;
 		Oid 		relid   = RelationGetRelid(rel);
 		Oid			attrtype = InvalidOid;
+		int			keynum = 0;
+		AttrNumber	keyAttno;
 		Assert(subplan != NULL);
 		
+		/* There may be some waste here but that's okay */
+		fmstate->key_flinfo = (FmgrInfo *) palloc0(sizeof(FmgrInfo) * tupdesc->natts);
 		/* loop through all columns of the foreign table */
 		for (int i = 0; i < tupdesc->natts; ++i)
 		{
@@ -4817,28 +4817,28 @@ static MonetdbFdwModifyState *create_foreign_modify(EState *estate,
 				{
 					attrName = pstrdup(NameStr(att->attname));
 					attrtype = att->atttypid;
-					break;
+
+					/* Find the key resjunk column in the subplan's result */
+					keyAttno = ExecFindJunkAttributeInTlist(subplan->targetlist,
+																	attrName);
+					if (!AttributeNumberIsValid(keyAttno))
+						elog(ERROR, "could not find junk %s column", attrName);
+
+					fmstate->key_attnums = lappend_int(fmstate->key_attnums, keyAttno);
+
+					/* First transmittable parameter will be key */
+					getTypeOutputInfo(attrtype, &typefnoid, &isvarlena);
+					fmgr_info(typefnoid, &fmstate->key_flinfo[keynum]);
+					++keynum;
 				}
 			}
 		}
-
-		if (!attrName)
-			ereport(ERROR,
-				(errcode(ERRCODE_FDW_UNABLE_TO_CREATE_EXECUTION),
-					errmsg("no primary key column specified for foreign MonetDB table"),
-					errdetail("For UPDATE or DELETE, at least one foreign table column must be marked as primary key column.")));
-
-		/* Find the key resjunk column in the subplan's result */
-		fmstate->keyAttno = ExecFindJunkAttributeInTlist(subplan->targetlist,
-														  attrName);
-		if (!AttributeNumberIsValid(fmstate->keyAttno))
-			elog(ERROR, "could not find junk %s column", attrName);
-
-		/* First transmittable parameter will be key */
-		getTypeOutputInfo(attrtype, &typefnoid, &isvarlena);
-		fmgr_info(typefnoid, &fmstate->p_flinfo[fmstate->p_nums]);
-		fmstate->p_nums++;
+		fmstate->p_nums += keynum;
 	}
+
+	/* There may be some waste here but that's okay */
+	n_params = list_length(fmstate->target_attrs) + list_length(fmstate->key_attnums);
+	fmstate->p_flinfo = (FmgrInfo *) palloc0(sizeof(FmgrInfo) * n_params);
 
 	if (operation == CMD_INSERT || operation == CMD_UPDATE)
 	{
@@ -4877,7 +4877,7 @@ static TupleTableSlot **execute_foreign_modify(EState *estate,
 												int *numSlots)
 {
 	MonetdbFdwModifyState *fmstate = (MonetdbFdwModifyState *) resultRelInfo->ri_FdwState;
-	ItemPointer 	key = NULL;
+	List 			*keylist = NIL;
 	const char 		**p_values = NULL;
 	int				n_rows = 0;
 	StringInfoData 	sql;
@@ -4923,47 +4923,33 @@ static TupleTableSlot **execute_foreign_modify(EState *estate,
 	 */
 	if (operation == CMD_UPDATE || operation == CMD_DELETE)
 	{
+		ListCell	*lc;
 		Datum		datum;
 		bool		isNull;
 
-		datum = ExecGetJunkAttribute(planSlots[0],
-									 fmstate->keyAttno,
-									 &isNull);
-		/* shouldn't ever get a null result... */
-		if (isNull)
-			elog(ERROR, "key is NULL");
-		key = (ItemPointer) DatumGetPointer(datum);
+		foreach(lc, fmstate->key_attnums)
+		{
+			AttrNumber		attnum = lfirst_int(lc);
+			datum = ExecGetJunkAttribute(planSlots[0],
+											attnum,
+											&isNull);
+			keylist = lappend(keylist, DatumGetPointer(datum));
+		}
 	}
 
 	/* Convert parameters needed by prepared statement to text form */
-	p_values = convert_prep_stmt_params(fmstate, key, slots, *numSlots);
+	p_values = convert_prep_stmt_params(fmstate, keylist, slots, *numSlots);
 
 	/*
 	 * Execute the prepared statement.
 	 * Get the result, and check for success.
 	 */
 	result = mapi_prepare(fmstate->conn, fmstate->query);
-	if (operation == CMD_UPDATE)
+	for(int i = 0; i < fmstate->p_nums; i++)
 	{
-		for(int i = 1; i < fmstate->p_nums; i++)
-		{
-			/* bind value */
-			elog(DEBUG2, "monetdb_fdw bind value%d: %s", i - 1, (char *) p_values[i]);
-			mapi_param_string(result, i - 1, MAPI_VARCHAR, (char *) p_values[i], NULL);
-		}
-
-		/* key is always the first param */
-		elog(DEBUG2, "monetdb_fdw bind value%d: %s", fmstate->p_nums - 1, (char *) p_values[0]);
-		mapi_param_string(result, fmstate->p_nums - 1, MAPI_VARCHAR, (char *) p_values[0], NULL);
-	}
-	else
-	{
-		for(int i = 0; i < fmstate->p_nums; i++)
-		{
-			/* bind value */
-			elog(DEBUG2, "monetdb_fdw bind value%d: %s", i, (char *) p_values[i]);
-			mapi_param_string(result, i, MAPI_VARCHAR, (char *) p_values[i], NULL);
-		}
+		/* bind value */
+		elog(DEBUG2, "monetdb_fdw bind value%d: %s", i, (char *) p_values[i]);
+		mapi_param_string(result, i, MAPI_VARCHAR, (char *) p_values[i], NULL);
 	}
 
     mapi_execute(result);
@@ -5013,7 +4999,7 @@ static TupleTableSlot **execute_foreign_modify(EState *estate,
  */
 static const char **
 convert_prep_stmt_params(MonetdbFdwModifyState *fmstate,
-						 ItemPointer tupleid,
+						 List *tupleid_keys,
 						 TupleTableSlot **slots,
 						 int numSlots)
 {
@@ -5021,6 +5007,7 @@ convert_prep_stmt_params(MonetdbFdwModifyState *fmstate,
 	int			i;
 	int			j;
 	int			pindex = 0;
+	ListCell   *cell;
 	MemoryContext oldcontext;
 
 	oldcontext = MemoryContextSwitchTo(fmstate->temp_cxt);
@@ -5028,19 +5015,9 @@ convert_prep_stmt_params(MonetdbFdwModifyState *fmstate,
 	p_values = (const char **) palloc(sizeof(char *) * fmstate->p_nums * numSlots);
 
 	/* key is provided only for UPDATE/DELETE, which don't allow batching */
-	Assert(!(tupleid != NULL && numSlots > 1));
+	Assert(!(list_length(tupleid_keys) != 0 && numSlots > 1));
 
-	/* 1st parameter should be key, if it's in use */
-	if (tupleid != NULL)
-	{
-		Assert(numSlots == 1);
-		/* don't need set_transmission_modes for TID output */
-		p_values[pindex] = OutputFunctionCall(&fmstate->p_flinfo[pindex],
-											  PointerGetDatum(tupleid));
-		pindex++;
-	}
-
-	/* get following parameters from slots */
+	/* get parameters from slots */
 	if (slots != NULL && fmstate->target_attrs != NIL)
 	{
 		TupleDesc	tupdesc = RelationGetDescr(fmstate->rel);
@@ -5051,7 +5028,7 @@ convert_prep_stmt_params(MonetdbFdwModifyState *fmstate,
 
 		for (i = 0; i < numSlots; i++)
 		{
-			j = (tupleid != NULL) ? 1 : 0;
+			j = list_length(tupleid_keys) ? list_length(tupleid_keys) : 0;
 			foreach(lc, fmstate->target_attrs)
 			{
 				int			attnum = lfirst_int(lc);
@@ -5074,6 +5051,17 @@ convert_prep_stmt_params(MonetdbFdwModifyState *fmstate,
 		}
 
 		reset_transmission_modes(nestlevel);
+	}
+
+	j = 0;
+	foreach(cell, tupleid_keys)
+	{
+		ItemPointer	attnum = lfirst(cell);
+		Assert(numSlots == 1);
+		/* Data about the primary key */
+		p_values[pindex] = OutputFunctionCall(&fmstate->key_flinfo[j], PointerGetDatum(attnum));
+		pindex++;
+		j++;
 	}
 
 	Assert(pindex == fmstate->p_nums * numSlots);

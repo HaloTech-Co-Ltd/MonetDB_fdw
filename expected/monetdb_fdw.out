@@ -422,10 +422,128 @@ DEBUG:  monetdb_fdw remote query is: SELECT name, age FROM test_u.test_default
  zm   |  22
 (1 row)
 
+-- test the joint primary key 
+SELECT monetdb_execute('foreign_server', $$CREATE TABLE orders (
+    order_id INTEGER,
+    product_id INTEGER,
+    customer_email VARCHAR(100),
+    order_date DATE,
+    quantity INTEGER,
+    CONSTRAINT pk_orders PRIMARY KEY (order_id, product_id)
+)$$);
+DEBUG:  monetdb: host: 127.0.0.1 port: 50000 user: test_u password: test_u dbname: test
+DEBUG:  monetdb_fdw remote query is: CREATE TABLE orders (
+    order_id INTEGER,
+    product_id INTEGER,
+    customer_email VARCHAR(100),
+    order_date DATE,
+    quantity INTEGER,
+    CONSTRAINT pk_orders PRIMARY KEY (order_id, product_id)
+)
+ monetdb_execute 
+-----------------
+ 
+(1 row)
+
+IMPORT FOREIGN SCHEMA "test_u" limit to (orders) from server foreign_server into public;
+DEBUG:  monetdb: host: 127.0.0.1 port: 50000 user: test_u password: test_u dbname: test
+DEBUG:  monetdb_fdw remote query is: SELECT 1 FROM sys.schemas WHERE name = 'test_u'
+DEBUG:  monetdb_fdw remote query is: 
+SELECT t.name as table_name, 
+  c.name as col_name, 
+  sys.sql_datatype(c.type, c.type_digits, c.type_scale, false, false) as type, 
+  CASE WHEN c."null" THEN 'false' ELSE 'true' END as expr, 
+  sys.ifthenelse(c."default" IS NOT NULL, c."default", NULL) as default_expr, 
+ (SELECT true FROM sys.objects kc, sys.keys k where kc.id = k.id and k.table_id = t.id and kc.name = c.name AND k.type = 0) AS pk, 
+ c.number as attnum 
+ FROM sys.tables t, sys.schemas s, sys.columns c  
+ WHERE t.schema_id = s.id 
+  AND t.type = 0 
+  AND c.table_id = t.id 
+  AND s.name = 'test_u' AND t.name IN ('orders') ORDER BY table_name, attnum
+DEBUG:  postgres execute query is: 
+CREATE FOREIGN TABLE orders (
+  order_id INTEGER OPTIONS (key 'true')  NOT NULL,
+  product_id INTEGER OPTIONS (key 'true')  NOT NULL,
+  customer_email CHARACTER VARYING(100),
+  order_date DATE,
+  quantity INTEGER
+) SERVER foreign_server
+OPTIONS (schema_name 'test_u', table_name 'orders');
+\dE+ orders
+                                List of relations
+ Schema |  Name  |     Type      |  Owner   | Persistence |  Size   | Description 
+--------+--------+---------------+----------+-------------+---------+-------------
+ public | orders | foreign table | postgres | permanent   | 0 bytes | 
+(1 row)
+
+\d+ orders
+                                                  Foreign table "public.orders"
+     Column     |          Type          | Collation | Nullable | Default | FDW options  | Storage  | Stats target | Description 
+----------------+------------------------+-----------+----------+---------+--------------+----------+--------------+-------------
+ order_id       | integer                |           | not null |         | (key 'true') | plain    |              | 
+ product_id     | integer                |           | not null |         | (key 'true') | plain    |              | 
+ customer_email | character varying(100) |           |          |         |              | extended |              | 
+ order_date     | date                   |           |          |         |              | plain    |              | 
+ quantity       | integer                |           |          |         |              | plain    |              | 
+Server: foreign_server
+FDW options: (schema_name 'test_u', table_name 'orders')
+
+INSERT INTO orders (order_id, product_id, customer_email, order_date, quantity)
+VALUES (1, 101, 'john.doe@example.com', '2025-01-01', 5);
+DEBUG:  monetdb: host: 127.0.0.1 port: 50000 user: test_u password: test_u dbname: test
+DEBUG:  monetdb_fdw remote prepare query is: INSERT INTO test_u.orders(order_id, product_id, customer_email, order_date, quantity) VALUES (?, ?, ?, ?, ?)
+DEBUG:  monetdb_fdw bind value0: 1
+DEBUG:  monetdb_fdw bind value1: 101
+DEBUG:  monetdb_fdw bind value2: john.doe@example.com
+DEBUG:  monetdb_fdw bind value3: 2025-01-01
+DEBUG:  monetdb_fdw bind value4: 5
+INSERT INTO orders (order_id, product_id, customer_email, order_date, quantity)
+VALUES (2, 102, 'jane.smith@example.com', '2025-02-15', 3);
+DEBUG:  monetdb: host: 127.0.0.1 port: 50000 user: test_u password: test_u dbname: test
+DEBUG:  monetdb_fdw remote prepare query is: INSERT INTO test_u.orders(order_id, product_id, customer_email, order_date, quantity) VALUES (?, ?, ?, ?, ?)
+DEBUG:  monetdb_fdw bind value0: 2
+DEBUG:  monetdb_fdw bind value1: 102
+DEBUG:  monetdb_fdw bind value2: jane.smith@example.com
+DEBUG:  monetdb_fdw bind value3: 2025-02-15
+DEBUG:  monetdb_fdw bind value4: 3
+UPDATE orders
+SET quantity = 10
+WHERE order_id = 1 AND product_id = 101;
+DEBUG:  monetdb: host: 127.0.0.1 port: 50000 user: test_u password: test_u dbname: test
+DEBUG:  monetdb: host: 127.0.0.1 port: 50000 user: test_u password: test_u dbname: test
+DEBUG:  monetdb_fdw remote query is: SELECT order_id, product_id, customer_email, order_date, quantity FROM test_u.orders WHERE ((order_id = 1)) AND ((product_id = 101)) /* FOR UPDATE */
+DEBUG:  monetdb_fdw remote prepare query is: UPDATE test_u.orders SET quantity = ? WHERE order_id = ? AND product_id = ?
+DEBUG:  monetdb_fdw bind value0: 10
+DEBUG:  monetdb_fdw bind value1: 1
+DEBUG:  monetdb_fdw bind value2: 101
+DELETE FROM orders
+WHERE order_id = 2 AND product_id = 102;
+DEBUG:  monetdb: host: 127.0.0.1 port: 50000 user: test_u password: test_u dbname: test
+DEBUG:  monetdb: host: 127.0.0.1 port: 50000 user: test_u password: test_u dbname: test
+DEBUG:  monetdb_fdw remote query is: SELECT order_id, product_id FROM test_u.orders WHERE ((order_id = 2)) AND ((product_id = 102)) /* FOR UPDATE */
+DEBUG:  monetdb_fdw remote prepare query is: DELETE FROM test_u.orders WHERE order_id = ? AND product_id = ?
+DEBUG:  monetdb_fdw bind value0: 2
+DEBUG:  monetdb_fdw bind value1: 102
+SELECT * FROM orders; 
+DEBUG:  monetdb: host: 127.0.0.1 port: 50000 user: test_u password: test_u dbname: test
+DEBUG:  monetdb_fdw remote query is: SELECT order_id, product_id, customer_email, order_date, quantity FROM test_u.orders
+ order_id | product_id |    customer_email    | order_date | quantity 
+----------+------------+----------------------+------------+----------
+        1 |        101 | john.doe@example.com | 01-01-2025 |       10
+(1 row)
+
 set client_min_messages = 'INFO';
 DROP FOREIGN TABLE emp;
 DROP FOREIGN TABLE delete_emp;
 DROP FOREIGN TABLE test_default;
+DROP FOREIGN TABLE orders;
+SELECT monetdb_execute('foreign_server', $$DROP TABLE orders$$);
+ monetdb_execute 
+-----------------
+ 
+(1 row)
+
 SELECT monetdb_execute('foreign_server', $$DROP TABLE test_default$$);
  monetdb_execute 
 -----------------

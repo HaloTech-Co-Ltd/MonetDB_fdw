@@ -113,10 +113,40 @@ IMPORT FOREIGN SCHEMA "test_u" limit to (test_default) from server foreign_serve
 \d+ test_default
 SELECT * FROM test_default;
 
+-- test the joint primary key 
+SELECT monetdb_execute('foreign_server', $$CREATE TABLE orders (
+    order_id INTEGER,
+    product_id INTEGER,
+    customer_email VARCHAR(100),
+    order_date DATE,
+    quantity INTEGER,
+    CONSTRAINT pk_orders PRIMARY KEY (order_id, product_id)
+)$$);
+
+IMPORT FOREIGN SCHEMA "test_u" limit to (orders) from server foreign_server into public;
+\dE+ orders
+\d+ orders
+
+INSERT INTO orders (order_id, product_id, customer_email, order_date, quantity)
+VALUES (1, 101, 'john.doe@example.com', '2025-01-01', 5);
+INSERT INTO orders (order_id, product_id, customer_email, order_date, quantity)
+VALUES (2, 102, 'jane.smith@example.com', '2025-02-15', 3);
+
+UPDATE orders
+SET quantity = 10
+WHERE order_id = 1 AND product_id = 101;
+
+DELETE FROM orders
+WHERE order_id = 2 AND product_id = 102;
+
+SELECT * FROM orders; 
+
 set client_min_messages = 'INFO';
 DROP FOREIGN TABLE emp;
 DROP FOREIGN TABLE delete_emp;
 DROP FOREIGN TABLE test_default;
+DROP FOREIGN TABLE orders;
+SELECT monetdb_execute('foreign_server', $$DROP TABLE orders$$);
 SELECT monetdb_execute('foreign_server', $$DROP TABLE test_default$$);
 SELECT monetdb_execute('foreign_server', $$DROP TABLE delete_emp$$);
 SELECT monetdb_execute('foreign_server', $$DROP TABLE emp$$);
