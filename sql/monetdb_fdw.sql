@@ -115,11 +115,11 @@ SELECT * FROM test_default;
 
 -- test the joint primary key 
 SELECT monetdb_execute('foreign_server', $$CREATE TABLE orders (
-    order_id INTEGER,
-    product_id INTEGER,
+    order_id NUMERIC,
+    product_id NUMERIC,
     customer_email VARCHAR(100),
     order_date DATE,
-    quantity INTEGER,
+    quantity NUMERIC,
     CONSTRAINT pk_orders PRIMARY KEY (order_id, product_id)
 )$$);
 

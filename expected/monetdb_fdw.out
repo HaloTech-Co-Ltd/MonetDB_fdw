@@ -424,20 +424,20 @@ DEBUG:  monetdb_fdw remote query is: SELECT name, age FROM test_u.test_default
 
 -- test the joint primary key 
 SELECT monetdb_execute('foreign_server', $$CREATE TABLE orders (
-    order_id INTEGER,
-    product_id INTEGER,
+    order_id NUMERIC,
+    product_id NUMERIC,
     customer_email VARCHAR(100),
     order_date DATE,
-    quantity INTEGER,
+    quantity NUMERIC,
     CONSTRAINT pk_orders PRIMARY KEY (order_id, product_id)
 )$$);
 DEBUG:  monetdb: host: 127.0.0.1 port: 50000 user: test_u password: test_u dbname: test
 DEBUG:  monetdb_fdw remote query is: CREATE TABLE orders (
-    order_id INTEGER,
-    product_id INTEGER,
+    order_id NUMERIC,
+    product_id NUMERIC,
     customer_email VARCHAR(100),
     order_date DATE,
-    quantity INTEGER,
+    quantity NUMERIC,
     CONSTRAINT pk_orders PRIMARY KEY (order_id, product_id)
 )
  monetdb_execute 
@@ -463,11 +463,11 @@ SELECT t.name as table_name,
   AND s.name = 'test_u' AND t.name IN ('orders') ORDER BY table_name, attnum
 DEBUG:  postgres execute query is: 
 CREATE FOREIGN TABLE orders (
-  order_id INTEGER OPTIONS (key 'true')  NOT NULL,
-  product_id INTEGER OPTIONS (key 'true')  NOT NULL,
+  order_id DECIMAL(18,3) OPTIONS (key 'true')  NOT NULL,
+  product_id DECIMAL(18,3) OPTIONS (key 'true')  NOT NULL,
   customer_email CHARACTER VARYING(100),
   order_date DATE,
-  quantity INTEGER
+  quantity DECIMAL(18,3)
 ) SERVER foreign_server
 OPTIONS (schema_name 'test_u', table_name 'orders');
 \dE+ orders
@@ -481,11 +481,11 @@ OPTIONS (schema_name 'test_u', table_name 'orders');
                                                   Foreign table "public.orders"
      Column     |          Type          | Collation | Nullable | Default | FDW options  | Storage  | Stats target | Description 
 ----------------+------------------------+-----------+----------+---------+--------------+----------+--------------+-------------
- order_id       | integer                |           | not null |         | (key 'true') | plain    |              | 
- product_id     | integer                |           | not null |         | (key 'true') | plain    |              | 
+ order_id       | numeric(18,3)          |           | not null |         | (key 'true') | main     |              | 
+ product_id     | numeric(18,3)          |           | not null |         | (key 'true') | main     |              | 
  customer_email | character varying(100) |           |          |         |              | extended |              | 
  order_date     | date                   |           |          |         |              | plain    |              | 
- quantity       | integer                |           |          |         |              | plain    |              | 
+ quantity       | numeric(18,3)          |           |          |         |              | main     |              | 
 Server: foreign_server
 FDW options: (schema_name 'test_u', table_name 'orders')
 
@@ -493,20 +493,20 @@ INSERT INTO orders (order_id, product_id, customer_email, order_date, quantity)
 VALUES (1, 101, 'john.doe@example.com', '2025-01-01', 5);
 DEBUG:  monetdb: host: 127.0.0.1 port: 50000 user: test_u password: test_u dbname: test
 DEBUG:  monetdb_fdw remote prepare query is: INSERT INTO test_u.orders(order_id, product_id, customer_email, order_date, quantity) VALUES (?, ?, ?, ?, ?)
-DEBUG:  monetdb_fdw bind value0: 1
-DEBUG:  monetdb_fdw bind value1: 101
+DEBUG:  monetdb_fdw bind value0: 1.000
+DEBUG:  monetdb_fdw bind value1: 101.000
 DEBUG:  monetdb_fdw bind value2: john.doe@example.com
 DEBUG:  monetdb_fdw bind value3: 2025-01-01
-DEBUG:  monetdb_fdw bind value4: 5
+DEBUG:  monetdb_fdw bind value4: 5.000
 INSERT INTO orders (order_id, product_id, customer_email, order_date, quantity)
 VALUES (2, 102, 'jane.smith@example.com', '2025-02-15', 3);
 DEBUG:  monetdb: host: 127.0.0.1 port: 50000 user: test_u password: test_u dbname: test
 DEBUG:  monetdb_fdw remote prepare query is: INSERT INTO test_u.orders(order_id, product_id, customer_email, order_date, quantity) VALUES (?, ?, ?, ?, ?)
-DEBUG:  monetdb_fdw bind value0: 2
-DEBUG:  monetdb_fdw bind value1: 102
+DEBUG:  monetdb_fdw bind value0: 2.000
+DEBUG:  monetdb_fdw bind value1: 102.000
 DEBUG:  monetdb_fdw bind value2: jane.smith@example.com
 DEBUG:  monetdb_fdw bind value3: 2025-02-15
-DEBUG:  monetdb_fdw bind value4: 3
+DEBUG:  monetdb_fdw bind value4: 3.000
 UPDATE orders
 SET quantity = 10
 WHERE order_id = 1 AND product_id = 101;
@@ -514,23 +514,23 @@ DEBUG:  monetdb: host: 127.0.0.1 port: 50000 user: test_u password: test_u dbnam
 DEBUG:  monetdb: host: 127.0.0.1 port: 50000 user: test_u password: test_u dbname: test
 DEBUG:  monetdb_fdw remote query is: SELECT order_id, product_id, customer_email, order_date, quantity FROM test_u.orders WHERE ((order_id = 1)) AND ((product_id = 101)) /* FOR UPDATE */
 DEBUG:  monetdb_fdw remote prepare query is: UPDATE test_u.orders SET quantity = ? WHERE order_id = ? AND product_id = ?
-DEBUG:  monetdb_fdw bind value0: 10
-DEBUG:  monetdb_fdw bind value1: 1
-DEBUG:  monetdb_fdw bind value2: 101
+DEBUG:  monetdb_fdw bind value0: 10.000
+DEBUG:  monetdb_fdw bind value1: 1.000
+DEBUG:  monetdb_fdw bind value2: 101.000
 DELETE FROM orders
 WHERE order_id = 2 AND product_id = 102;
 DEBUG:  monetdb: host: 127.0.0.1 port: 50000 user: test_u password: test_u dbname: test
 DEBUG:  monetdb: host: 127.0.0.1 port: 50000 user: test_u password: test_u dbname: test
 DEBUG:  monetdb_fdw remote query is: SELECT order_id, product_id FROM test_u.orders WHERE ((order_id = 2)) AND ((product_id = 102)) /* FOR UPDATE */
 DEBUG:  monetdb_fdw remote prepare query is: DELETE FROM test_u.orders WHERE order_id = ? AND product_id = ?
-DEBUG:  monetdb_fdw bind value0: 2
-DEBUG:  monetdb_fdw bind value1: 102
+DEBUG:  monetdb_fdw bind value0: 2.000
+DEBUG:  monetdb_fdw bind value1: 102.000
 SELECT * FROM orders; 
 DEBUG:  monetdb: host: 127.0.0.1 port: 50000 user: test_u password: test_u dbname: test
 DEBUG:  monetdb_fdw remote query is: SELECT order_id, product_id, customer_email, order_date, quantity FROM test_u.orders
  order_id | product_id |    customer_email    | order_date | quantity 
 ----------+------------+----------------------+------------+----------
-        1 |        101 | john.doe@example.com | 01-01-2025 |       10
+    1.000 |    101.000 | john.doe@example.com | 01-01-2025 |   10.000
 (1 row)
 
 set client_min_messages = 'INFO';

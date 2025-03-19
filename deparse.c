@@ -2794,15 +2794,7 @@ deparseVar(Var *node, deparse_expr_cxt *context)
 /*
  * Deparse given constant value into context->buf.
  *
- * This function has to be kept in sync with ruleutils.c's get_const_expr.
- *
- * As in that function, showtype can be -1 to never show "::typename"
- * decoration, +1 to always show it, or 0 to show it only if the constant
- * wouldn't be assumed to be the right type by default.
- *
- * In addition, this code allows showtype to be -2 to indicate that we should
- * not show "::typename" decoration if the constant is printed as an untyped
- * literal or NULL (while in other cases, behaving as for showtype == 0).
+ * As in that function, never show "::typename"
  */
 static void
 deparseConst(Const *node, deparse_expr_cxt *context, int showtype)
@@ -2811,17 +2803,10 @@ deparseConst(Const *node, deparse_expr_cxt *context, int showtype)
 	Oid			typoutput;
 	bool		typIsVarlena;
 	char	   *extval;
-	bool		isfloat = false;
-	bool		isstring = false;
-	bool		needlabel;
 
 	if (node->constisnull)
 	{
 		appendStringInfoString(buf, "NULL");
-		if (showtype >= 0)
-			appendStringInfo(buf, "::%s",
-							 deparse_type_name(node->consttype,
-											   node->consttypmod));
 		return;
 	}
 
@@ -2849,8 +2834,6 @@ deparseConst(Const *node, deparse_expr_cxt *context, int showtype)
 						appendStringInfo(buf, "(%s)", extval);
 					else
 						appendStringInfoString(buf, extval);
-					if (strcspn(extval, "eE.") != strlen(extval))
-						isfloat = true; /* it looks like a float */
 				}
 				else
 					appendStringInfo(buf, "'%s'", extval);
@@ -2868,46 +2851,10 @@ deparseConst(Const *node, deparse_expr_cxt *context, int showtype)
 			break;
 		default:
 			deparseStringLiteral(buf, extval);
-			isstring = true;
 			break;
 	}
 
 	pfree(extval);
-
-	if (showtype == -1)
-		return;					/* never print type label */
-
-	/*
-	 * For showtype == 0, append ::typename unless the constant will be
-	 * implicitly typed as the right type when it is read in.
-	 *
-	 * XXX this code has to be kept in sync with the behavior of the parser,
-	 * especially make_const.
-	 */
-	switch (node->consttype)
-	{
-		case BOOLOID:
-		case INT4OID:
-		case UNKNOWNOID:
-			needlabel = false;
-			break;
-		case NUMERICOID:
-			needlabel = !isfloat || (node->consttypmod >= 0);
-			break;
-		default:
-			if (showtype == -2)
-			{
-				/* label unless we printed it as an untyped string */
-				needlabel = !isstring;
-			}
-			else
-				needlabel = true;
-			break;
-	}
-	if (needlabel || showtype > 0)
-		appendStringInfo(buf, "::%s",
-						 deparse_type_name(node->consttype,
-										   node->consttypmod));
 }
 
 /*
