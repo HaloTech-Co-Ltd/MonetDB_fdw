@@ -5043,8 +5043,20 @@ convert_prep_stmt_params(MonetdbFdwModifyState *fmstate,
 				if (isnull)
 					p_values[pindex] = NULL;
 				else
-					p_values[pindex] = OutputFunctionCall(&fmstate->p_flinfo[j],
-														  value);
+				{
+					char 	*val = OutputFunctionCall(&fmstate->p_flinfo[j], value);
+					/* Boolean types require additional processing */
+					if (attr->atttypid == BOOLOID)
+					{
+						/* [MonetDB ERROR] conversion of string 't' to type bit failed. */
+						if (!strcmp(val, "t"))
+							val = pstrdup("true");
+						else if (!strcmp(val, "f"))
+							val = pstrdup("false");
+					}
+
+					p_values[pindex] = val;
+				}
 				pindex++;
 				j++;
 			}

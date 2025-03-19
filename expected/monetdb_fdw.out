@@ -562,21 +562,3 @@ SELECT monetdb_execute('foreign_server', $$DROP TABLE emp$$);
  
 (1 row)
 
-SELECT monetdb_execute('foreign_server', $$ALTER USER test_u SET SCHEMA sys$$);
- monetdb_execute 
------------------
- 
-(1 row)
-
-SELECT monetdb_execute('foreign_server', $$DROP SCHEMA test_u$$);
- monetdb_execute 
------------------
- 
-(1 row)
-
-SELECT monetdb_execute('foreign_server', $$DROP USER test_u$$);
- monetdb_execute 
------------------
- 
-(1 row)
-

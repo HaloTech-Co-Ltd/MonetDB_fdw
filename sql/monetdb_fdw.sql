@@ -150,6 +150,3 @@ SELECT monetdb_execute('foreign_server', $$DROP TABLE orders$$);
 SELECT monetdb_execute('foreign_server', $$DROP TABLE test_default$$);
 SELECT monetdb_execute('foreign_server', $$DROP TABLE delete_emp$$);
 SELECT monetdb_execute('foreign_server', $$DROP TABLE emp$$);
-SELECT monetdb_execute('foreign_server', $$ALTER USER test_u SET SCHEMA sys$$);
-SELECT monetdb_execute('foreign_server', $$DROP SCHEMA test_u$$);
-SELECT monetdb_execute('foreign_server', $$DROP USER test_u$$);

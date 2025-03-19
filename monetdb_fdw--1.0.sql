@@ -17,3 +17,6 @@ LANGUAGE C STRICT;
 
 COMMENT ON FUNCTION monetdb_execute(name, text)
 IS 'executes an arbitrary SQL statement with no results on the MonetDB server';
+
+-- TINYINT
+CREATE DOMAIN TINYINT AS SMALLINT CHECK(VALUE >= -127 AND VALUE <= 127);
