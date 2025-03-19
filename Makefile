@@ -14,7 +14,7 @@ SHLIB_LINK_INTERNAL = -L"$(MONETDB_HOME)/" -L"$(MONETDB_HOME)/lib64/" -lmapi-11.
 EXTENSION = monetdb_fdw
 DATA = monetdb_fdw--1.0.sql
 
-REGRESS = monetdb_fdw
+REGRESS = monetdb_fdw type_support
 
 ifdef USE_PGXS
 PG_CONFIG = pg_config

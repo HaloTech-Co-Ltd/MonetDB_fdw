@@ -1,0 +1,159 @@
+select monetdb_execute('foreign_server', $$CREATE TABLE Numeric_Types(
+	a TINYINT,
+	b SMALLINT,
+	c INTEGER,
+	d BIGINT,
+	-- e HUGEINT, 
+	f DECIMAL,
+	g NUMERIC(38, 3),
+	h REAL,
+	i DOUBLE PRECISION,
+	j FLOAT 
+)$$);
+ monetdb_execute 
+-----------------
+ 
+(1 row)
+
+IMPORT FOREIGN SCHEMA "test_u" limit to (Numeric_Types) from server foreign_server into public; 
+\d+ Numeric_Types
+                                      Foreign table "public.numeric_types"
+ Column |       Type       | Collation | Nullable | Default | FDW options | Storage | Stats target | Description 
+--------+------------------+-----------+----------+---------+-------------+---------+--------------+-------------
+ a      | tinyint          |           |          |         |             | plain   |              | 
+ b      | smallint         |           |          |         |             | plain   |              | 
+ c      | integer          |           |          |         |             | plain   |              | 
+ d      | bigint           |           |          |         |             | plain   |              | 
+ f      | numeric(18,3)    |           |          |         |             | main    |              | 
+ g      | numeric(38,3)    |           |          |         |             | main    |              | 
+ h      | real             |           |          |         |             | plain   |              | 
+ i      | double precision |           |          |         |             | plain   |              | 
+ j      | double precision |           |          |         |             | plain   |              | 
+Server: foreign_server
+FDW options: (schema_name 'test_u', table_name 'numeric_types')
+
+-- test TINYINT
+INSERT INTO Numeric_Types(a) VALUES(-127 - 1);
+ERROR:  value for domain tinyint violates check constraint "tinyint_check"
+INSERT INTO Numeric_Types(a) VALUES(127);
+INSERT INTO Numeric_Types(a) VALUES(127 + 1);
+ERROR:  value for domain tinyint violates check constraint "tinyint_check"
+SELECT * FROM Numeric_Types;
+  a  | b | c | d | f | g | h | i | j 
+-----+---+---+---+---+---+---+---+---
+ 127 |   |   |   |   |   |   |   |  
+(1 row)
+
+TRUNCATE Numeric_Types;
+-- test SMALLINT
+INSERT INTO Numeric_Types(b) VALUES(-32767 - 1);
+ERROR:  [MonetDB ERROR] conversion of string '-32768' to type sht failed.
+
+INSERT INTO Numeric_Types(b) VALUES(32767);
+INSERT INTO Numeric_Types(b) VALUES(32767 + 1);
+ERROR:  smallint out of range
+SELECT * FROM Numeric_Types;
+ a |   b   | c | d | f | g | h | i | j 
+---+-------+---+---+---+---+---+---+---
+   | 32767 |   |   |   |   |   |   |  
+(1 row)
+
+TRUNCATE Numeric_Types;
+-- test INTEGER
+INSERT INTO Numeric_Types(c) VALUES(-2147483647 - 1);
+ERROR:  [MonetDB ERROR] conversion of string '-2147483648' to type int failed.
+
+INSERT INTO Numeric_Types(c) VALUES(2147483647);
+INSERT INTO Numeric_Types(c) VALUES(2147483647 + 1);
+ERROR:  integer out of range
+SELECT * FROM Numeric_Types;
+ a | b |     c      | d | f | g | h | i | j 
+---+---+------------+---+---+---+---+---+---
+   |   | 2147483647 |   |   |   |   |   |  
+(1 row)
+
+TRUNCATE Numeric_Types;
+-- test BIGINT
+INSERT INTO Numeric_Types(d) VALUES(-9223372036854775807 - 1);
+ERROR:  [MonetDB ERROR] conversion of string '-9223372036854775808' to type lng failed.
+
+INSERT INTO Numeric_Types(d) VALUES(9223372036854775807);
+INSERT INTO Numeric_Types(d) VALUES(9223372036854775807 + 1);
+ERROR:  bigint out of range
+SELECT * FROM Numeric_Types;
+ a | b | c |          d          | f | g | h | i | j 
+---+---+---+---------------------+---+---+---+---+---
+   |   |   | 9223372036854775807 |   |   |   |   |  
+(1 row)
+
+select monetdb_execute('foreign_server', $$CREATE TABLE bool_Types(
+	a BOOLEAN
+)$$);
+ monetdb_execute 
+-----------------
+ 
+(1 row)
+
+IMPORT FOREIGN SCHEMA "test_u" limit to (bool_Types) from server foreign_server into public; 
+\d+ bool_Types
+                                   Foreign table "public.bool_types"
+ Column |  Type   | Collation | Nullable | Default | FDW options | Storage | Stats target | Description 
+--------+---------+-----------+----------+---------+-------------+---------+--------------+-------------
+ a      | boolean |           |          |         |             | plain   |              | 
+Server: foreign_server
+FDW options: (schema_name 'test_u', table_name 'bool_types')
+
+-- test BOOLEAN
+INSERT INTO bool_Types VALUES(true);
+INSERT INTO bool_Types VALUES('true');
+INSERT INTO bool_Types VALUES('1');
+INSERT INTO bool_Types VALUES('t');
+INSERT INTO bool_Types VALUES(false);
+INSERT INTO bool_Types VALUES('false');
+INSERT INTO bool_Types VALUES('0');
+INSERT INTO bool_Types VALUES('f');
+SELECT * FROM bool_Types;
+ a 
+---
+ t
+ t
+ t
+ t
+ f
+ f
+ f
+ f
+(8 rows)
+
+DROP FOREIGN TABLE bool_Types;
+DROP FOREIGN TABLE Numeric_Types;
+SELECT monetdb_execute('foreign_server', $$DROP TABLE bool_Types$$);
+ monetdb_execute 
+-----------------
+ 
+(1 row)
+
+SELECT monetdb_execute('foreign_server', $$DROP TABLE Numeric_Types$$);
+ monetdb_execute 
+-----------------
+ 
+(1 row)
+
+SELECT monetdb_execute('foreign_server', $$ALTER USER test_u SET SCHEMA sys$$);
+ monetdb_execute 
+-----------------
+ 
+(1 row)
+
+SELECT monetdb_execute('foreign_server', $$DROP SCHEMA test_u$$);
+ monetdb_execute 
+-----------------
+ 
+(1 row)
+
+SELECT monetdb_execute('foreign_server', $$DROP USER test_u$$);
+ monetdb_execute 
+-----------------
+ 
+(1 row)
+
