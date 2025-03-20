@@ -5,7 +5,9 @@ OBJS = \
 	$(WIN32RES)   \
 	deparse.o 	  \
 	monetdb_fdw.o \
-	shippable.o
+	shippable.o   \
+	connection.o
+
 PGFILEDESC = "monetdb_fdw - foreign data wrapper for MonetDB"
 
 PG_CPPFLAGS = -I"$(MONETDB_HOME)/include/monetdb/"

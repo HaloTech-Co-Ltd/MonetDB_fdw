@@ -14,6 +14,8 @@
 #ifndef MONETDB_FDW_H
 #define MONETDB_FDW_H
 
+#include <mapi.h>
+
 #include "foreign/foreign.h"
 #include "lib/stringinfo.h"
 #include "nodes/execnodes.h"
@@ -43,6 +45,23 @@
 #define MAPI_DATETIME	17
 #define MAPI_NUMERIC	18
 
+#define die(dbh,hdl)																		\
+			do {																			\
+				if (hdl)																	\
+					elog(ERROR, "[MonetDB RESULT ERROR] %s", mapi_result_error(hdl)); 		\
+				else if (dbh)																\
+					elog(ERROR, "[MonetDB ERROR] %s", mapi_error_str(dbh));					\
+				else																		\
+					elog(ERROR, "command failed\n"); 										\
+			} while (0)
+
+#define error_info(dbh,hdl)																		\
+			do {																			\
+				if (hdl)																	\
+					elog(INFO, "[MonetDB RESULT ERROR] %s", mapi_result_error(hdl)); 		\
+				else if (dbh)																\
+					elog(INFO, "[MonetDB ERROR] %s", mapi_error_str(dbh));					\
+			} while (0)
 /*
  * FDW-specific planner information kept in RelOptInfo.fdw_private for a
  * monetdb_fdw foreign table.  For a baserel, this struct is created by
@@ -148,6 +167,11 @@ typedef struct MonetdbFdwRelationInfo
 	 */
 	int			relation_index;
 } MonetdbFdwRelationInfo;
+
+/* in connection.c */
+extern Mapi GetConnection(UserMapping *user, ForeignServer *server);
+extern void ReleaseConnection(Mapi conn);
+extern void do_sql_command(Mapi conn, const char *sql);
 
 /* in monetdb_fdw.c */
 extern int	set_transmission_modes(void);
