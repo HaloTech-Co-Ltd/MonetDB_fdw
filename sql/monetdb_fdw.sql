@@ -92,7 +92,7 @@ SELECT * FROM delete_emp;
 INSERT INTO delete_emp VALUES('John', 23) RETURNING *;
 DELETE FROM delete_emp WHERE name = 'John' RETURNING *;
 SELECT * FROM delete_emp;
-UPDATE delete_emp SET name = 'Mary' WHERE name = 'Mary2' RETURNING *; -- error, MonetDB "UPDATE ... RETURNING" has bug
+-- UPDATE delete_emp SET name = 'Mary' WHERE name = 'Mary2' RETURNING *; -- error, MonetDB "UPDATE ... RETURNING" has bug
 SELECT * FROM delete_emp;
 
 DROP FOREIGN TABLE emp;

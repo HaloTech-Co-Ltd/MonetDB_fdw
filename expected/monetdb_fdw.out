@@ -4,10 +4,10 @@ CREATE SERVER foreign_server FOREIGN DATA WRAPPER monetdb_fdw
 OPTIONS (host '127.0.0.1', port '50000', dbname 'test');
 CREATE USER MAPPING FOR CURRENT_USER SERVER foreign_server OPTIONS (user 'monetdb', password 'monetdb');
 SELECT monetdb_execute('foreign_server', $$DROP USER test_u$$);
-ERROR:  [MonetDB ERROR] DROP USER: no such user role 'test_u'
+ERROR:  [MonetDB RESULT ERROR] DROP USER: no such user role 'test_u'
 
 SELECT monetdb_execute('foreign_server', $$DROP SCHEMA test_u$$);
-ERROR:  [MonetDB ERROR] DROP SCHEMA: name test_u does not exist
+ERROR:  [MonetDB RESULT ERROR] DROP SCHEMA: name test_u does not exist
 
 SELECT monetdb_execute('foreign_server', $$CREATE USER "test_u" WITH PASSWORD 'test_u' NAME 'test_user' SCHEMA "sys"$$);
  monetdb_execute 
@@ -126,7 +126,7 @@ SELECT * FROM delete_emp;
 (2 rows)
 
 INSERT INTO delete_emp VALUES('Mary', 22); -- error
-ERROR:  [MonetDB ERROR] INSERT INTO: PRIMARY KEY constraint 'delete_emp.delete_emp_name_pkey' violated
+ERROR:  [MonetDB RESULT ERROR] INSERT INTO: PRIMARY KEY constraint 'delete_emp.delete_emp_name_pkey' violated
 
 INSERT INTO delete_emp VALUES('Mary2', 22);
 SELECT * FROM delete_emp;
@@ -158,18 +158,21 @@ SELECT * FROM delete_emp;
 
 set client_min_messages = 'debug2';
 INSERT INTO emp VALUES('John', 23);
-DEBUG:  monetdb: host: 127.0.0.1 port: 50000 user: test_u password: test_u dbname: test
+DEBUG:  monetdb_fdw: begin remote transaction
 DEBUG:  monetdb_fdw remote prepare query is: INSERT INTO test_u.emp(name, age) VALUES (?, ?)
-DEBUG:  monetdb_fdw bind value0: John
-DEBUG:  monetdb_fdw bind value1: 23
+DEBUG:  monetdb_fdw bind value[0]: John
+DEBUG:  monetdb_fdw bind value[1]: 23
+DEBUG:  monetdb_fdw: commit remote transaction
 INSERT INTO emp VALUES('Mary', 22);
-DEBUG:  monetdb: host: 127.0.0.1 port: 50000 user: test_u password: test_u dbname: test
+DEBUG:  monetdb_fdw: begin remote transaction
 DEBUG:  monetdb_fdw remote prepare query is: INSERT INTO test_u.emp(name, age) VALUES (?, ?)
-DEBUG:  monetdb_fdw bind value0: Mary
-DEBUG:  monetdb_fdw bind value1: 22
+DEBUG:  monetdb_fdw bind value[0]: Mary
+DEBUG:  monetdb_fdw bind value[1]: 22
+DEBUG:  monetdb_fdw: commit remote transaction
 SELECT * FROM emp;
-DEBUG:  monetdb: host: 127.0.0.1 port: 50000 user: test_u password: test_u dbname: test
+DEBUG:  monetdb_fdw: begin remote transaction
 DEBUG:  monetdb_fdw remote query is: SELECT name, age FROM test_u.emp
+DEBUG:  monetdb_fdw: commit remote transaction
  name | age 
 ------+-----
  John |  23
@@ -177,18 +180,21 @@ DEBUG:  monetdb_fdw remote query is: SELECT name, age FROM test_u.emp
 (2 rows)
 
 INSERT INTO delete_emp VALUES('John', 23);
-DEBUG:  monetdb: host: 127.0.0.1 port: 50000 user: test_u password: test_u dbname: test
+DEBUG:  monetdb_fdw: begin remote transaction
 DEBUG:  monetdb_fdw remote prepare query is: INSERT INTO test_u.delete_emp(name, age) VALUES (?, ?)
-DEBUG:  monetdb_fdw bind value0: John
-DEBUG:  monetdb_fdw bind value1: 23
+DEBUG:  monetdb_fdw bind value[0]: John
+DEBUG:  monetdb_fdw bind value[1]: 23
+DEBUG:  monetdb_fdw: commit remote transaction
 INSERT INTO delete_emp VALUES('Mary', 22);
-DEBUG:  monetdb: host: 127.0.0.1 port: 50000 user: test_u password: test_u dbname: test
+DEBUG:  monetdb_fdw: begin remote transaction
 DEBUG:  monetdb_fdw remote prepare query is: INSERT INTO test_u.delete_emp(name, age) VALUES (?, ?)
-DEBUG:  monetdb_fdw bind value0: Mary
-DEBUG:  monetdb_fdw bind value1: 22
+DEBUG:  monetdb_fdw bind value[0]: Mary
+DEBUG:  monetdb_fdw bind value[1]: 22
+DEBUG:  monetdb_fdw: commit remote transaction
 SELECT * FROM delete_emp;
-DEBUG:  monetdb: host: 127.0.0.1 port: 50000 user: test_u password: test_u dbname: test
+DEBUG:  monetdb_fdw: begin remote transaction
 DEBUG:  monetdb_fdw remote query is: SELECT name, age FROM test_u.delete_emp
+DEBUG:  monetdb_fdw: commit remote transaction
  name | age 
 ------+-----
  John |  23
@@ -200,15 +206,16 @@ UPDATE emp SET name = 'Mary2' WHERE name = 'Mary'; -- error
 ERROR:  no primary key column specified for foreign MonetDB table
 DETAIL:  For UPDATE or DELETE, at least one foreign table column must be marked as primary key column.
 UPDATE delete_emp SET name = 'Mary2' WHERE name = 'Mary'; -- ok
-DEBUG:  monetdb: host: 127.0.0.1 port: 50000 user: test_u password: test_u dbname: test
-DEBUG:  monetdb: host: 127.0.0.1 port: 50000 user: test_u password: test_u dbname: test
+DEBUG:  monetdb_fdw: begin remote transaction
 DEBUG:  monetdb_fdw remote query is: SELECT name, age FROM test_u.delete_emp WHERE ((name = 'Mary')) /* FOR UPDATE */
 DEBUG:  monetdb_fdw remote prepare query is: UPDATE test_u.delete_emp SET name = ? WHERE name = ?
-DEBUG:  monetdb_fdw bind value0: Mary2
-DEBUG:  monetdb_fdw bind value1: Mary
+DEBUG:  monetdb_fdw bind value[0]: Mary2
+DEBUG:  monetdb_fdw bind value[1]: Mary
+DEBUG:  monetdb_fdw: commit remote transaction
 SELECT * FROM delete_emp;
-DEBUG:  monetdb: host: 127.0.0.1 port: 50000 user: test_u password: test_u dbname: test
+DEBUG:  monetdb_fdw: begin remote transaction
 DEBUG:  monetdb_fdw remote query is: SELECT name, age FROM test_u.delete_emp
+DEBUG:  monetdb_fdw: commit remote transaction
  name  | age 
 -------+-----
  John  |  23
@@ -216,15 +223,16 @@ DEBUG:  monetdb_fdw remote query is: SELECT name, age FROM test_u.delete_emp
 (2 rows)
 
 UPDATE delete_emp SET name = 'John2' WHERE age = 23; 
-DEBUG:  monetdb: host: 127.0.0.1 port: 50000 user: test_u password: test_u dbname: test
-DEBUG:  monetdb: host: 127.0.0.1 port: 50000 user: test_u password: test_u dbname: test
+DEBUG:  monetdb_fdw: begin remote transaction
 DEBUG:  monetdb_fdw remote query is: SELECT name, age FROM test_u.delete_emp WHERE ((age = 23)) /* FOR UPDATE */
 DEBUG:  monetdb_fdw remote prepare query is: UPDATE test_u.delete_emp SET name = ? WHERE name = ?
-DEBUG:  monetdb_fdw bind value0: John2
-DEBUG:  monetdb_fdw bind value1: John
+DEBUG:  monetdb_fdw bind value[0]: John2
+DEBUG:  monetdb_fdw bind value[1]: John
+DEBUG:  monetdb_fdw: commit remote transaction
 SELECT * FROM delete_emp;
-DEBUG:  monetdb: host: 127.0.0.1 port: 50000 user: test_u password: test_u dbname: test
+DEBUG:  monetdb_fdw: begin remote transaction
 DEBUG:  monetdb_fdw remote query is: SELECT name, age FROM test_u.delete_emp
+DEBUG:  monetdb_fdw: commit remote transaction
  name  | age 
 -------+-----
  John2 |  23
@@ -233,46 +241,42 @@ DEBUG:  monetdb_fdw remote query is: SELECT name, age FROM test_u.delete_emp
 
 -- test returning
 INSERT INTO delete_emp VALUES('John', 23) RETURNING *;
-DEBUG:  monetdb: host: 127.0.0.1 port: 50000 user: test_u password: test_u dbname: test
+DEBUG:  monetdb_fdw: begin remote transaction
 DEBUG:  monetdb_fdw remote prepare query is: INSERT INTO test_u.delete_emp(name, age) VALUES (?, ?) RETURNING name, age
-DEBUG:  monetdb_fdw bind value0: John
-DEBUG:  monetdb_fdw bind value1: 23
+DEBUG:  monetdb_fdw bind value[0]: John
+DEBUG:  monetdb_fdw bind value[1]: 23
+DEBUG:  monetdb_fdw: commit remote transaction
  name | age 
 ------+-----
  John |  23
 (1 row)
 
 DELETE FROM delete_emp WHERE name = 'John' RETURNING *;
-DEBUG:  monetdb: host: 127.0.0.1 port: 50000 user: test_u password: test_u dbname: test
-DEBUG:  monetdb: host: 127.0.0.1 port: 50000 user: test_u password: test_u dbname: test
+DEBUG:  monetdb_fdw: begin remote transaction
 DEBUG:  monetdb_fdw remote query is: SELECT name FROM test_u.delete_emp WHERE ((name = 'John')) /* FOR UPDATE */
 DEBUG:  monetdb_fdw remote prepare query is: DELETE FROM test_u.delete_emp WHERE name = ? RETURNING name, age
-DEBUG:  monetdb_fdw bind value0: John
+DEBUG:  monetdb_fdw bind value[0]: John
+DEBUG:  monetdb_fdw: commit remote transaction
  name | age 
 ------+-----
  John |  23
 (1 row)
 
 SELECT * FROM delete_emp;
-DEBUG:  monetdb: host: 127.0.0.1 port: 50000 user: test_u password: test_u dbname: test
+DEBUG:  monetdb_fdw: begin remote transaction
 DEBUG:  monetdb_fdw remote query is: SELECT name, age FROM test_u.delete_emp
+DEBUG:  monetdb_fdw: commit remote transaction
  name  | age 
 -------+-----
  John2 |  23
  Mary2 |  22
 (2 rows)
 
-UPDATE delete_emp SET name = 'Mary' WHERE name = 'Mary2' RETURNING *; -- error, MonetDB "UPDATE ... RETURNING" has bug
-DEBUG:  monetdb: host: 127.0.0.1 port: 50000 user: test_u password: test_u dbname: test
-DEBUG:  monetdb: host: 127.0.0.1 port: 50000 user: test_u password: test_u dbname: test
-DEBUG:  monetdb_fdw remote query is: SELECT name, age FROM test_u.delete_emp WHERE ((name = 'Mary2')) /* FOR UPDATE */
-DEBUG:  monetdb_fdw remote prepare query is: UPDATE test_u.delete_emp SET name = ? WHERE name = ? RETURNING name, age
-DEBUG:  monetdb_fdw bind value0: Mary
-DEBUG:  monetdb_fdw bind value1: Mary2
-ERROR:  [MonetDB ERROR] (null)
+-- UPDATE delete_emp SET name = 'Mary' WHERE name = 'Mary2' RETURNING *; -- error, MonetDB "UPDATE ... RETURNING" has bug
 SELECT * FROM delete_emp;
-DEBUG:  monetdb: host: 127.0.0.1 port: 50000 user: test_u password: test_u dbname: test
+DEBUG:  monetdb_fdw: begin remote transaction
 DEBUG:  monetdb_fdw remote query is: SELECT name, age FROM test_u.delete_emp
+DEBUG:  monetdb_fdw: commit remote transaction
  name  | age 
 -------+-----
  John2 |  23
@@ -295,7 +299,7 @@ DEBUG:  monetdb_fdw remote query is: CREATE TABLE test_default(name VARCHAR(20) 
 
 -- test IMPORT FOREIGN SCHEMA
 IMPORT FOREIGN SCHEMA "test_u" from server foreign_server into public;
-DEBUG:  monetdb: host: 127.0.0.1 port: 50000 user: test_u password: test_u dbname: test
+DEBUG:  monetdb_fdw: begin remote transaction
 DEBUG:  monetdb_fdw remote query is: SELECT 1 FROM sys.schemas WHERE name = 'test_u'
 DEBUG:  monetdb_fdw remote query is: 
 SELECT t.name as table_name, 
@@ -328,6 +332,7 @@ CREATE FOREIGN TABLE test_default (
   age INTEGER
 ) SERVER foreign_server
 OPTIONS (schema_name 'test_u', table_name 'test_default');
+DEBUG:  monetdb_fdw: commit remote transaction
 \dE
                 List of relations
  Schema |     Name     |     Type      |  Owner   
@@ -338,8 +343,9 @@ OPTIONS (schema_name 'test_u', table_name 'test_default');
 (3 rows)
 
 SELECT * FROM emp;
-DEBUG:  monetdb: host: 127.0.0.1 port: 50000 user: test_u password: test_u dbname: test
+DEBUG:  monetdb_fdw: begin remote transaction
 DEBUG:  monetdb_fdw remote query is: SELECT name, age FROM test_u.emp
+DEBUG:  monetdb_fdw: commit remote transaction
  name | age 
 ------+-----
  John |  23
@@ -347,8 +353,9 @@ DEBUG:  monetdb_fdw remote query is: SELECT name, age FROM test_u.emp
 (2 rows)
 
 SELECT * FROM delete_emp;
-DEBUG:  monetdb: host: 127.0.0.1 port: 50000 user: test_u password: test_u dbname: test
+DEBUG:  monetdb_fdw: begin remote transaction
 DEBUG:  monetdb_fdw remote query is: SELECT name, age FROM test_u.delete_emp
+DEBUG:  monetdb_fdw: commit remote transaction
  name  | age 
 -------+-----
  John2 |  23
@@ -356,7 +363,8 @@ DEBUG:  monetdb_fdw remote query is: SELECT name, age FROM test_u.delete_emp
 (2 rows)
 
 EXPLAIN VERBOSE INSERT INTO test_default(age) values(22);
-DEBUG:  monetdb: host: 127.0.0.1 port: 50000 user: test_u password: test_u dbname: test
+DEBUG:  monetdb_fdw: begin remote transaction
+DEBUG:  monetdb_fdw: commit remote transaction
                                   QUERY PLAN                                   
 -------------------------------------------------------------------------------
  Insert on public.test_default  (cost=0.00..0.01 rows=0 width=0)
@@ -366,13 +374,15 @@ DEBUG:  monetdb: host: 127.0.0.1 port: 50000 user: test_u password: test_u dbnam
 (4 rows)
 
 INSERT INTO test_default(age) values(22);
-DEBUG:  monetdb: host: 127.0.0.1 port: 50000 user: test_u password: test_u dbname: test
+DEBUG:  monetdb_fdw: begin remote transaction
 DEBUG:  monetdb_fdw remote prepare query is: INSERT INTO test_u.test_default(name, age) VALUES (?, ?)
-DEBUG:  monetdb_fdw bind value0: zm
-DEBUG:  monetdb_fdw bind value1: 22
+DEBUG:  monetdb_fdw bind value[0]: zm
+DEBUG:  monetdb_fdw bind value[1]: 22
+DEBUG:  monetdb_fdw: commit remote transaction
 SELECT * FROM test_default;
-DEBUG:  monetdb: host: 127.0.0.1 port: 50000 user: test_u password: test_u dbname: test
+DEBUG:  monetdb_fdw: begin remote transaction
 DEBUG:  monetdb_fdw remote query is: SELECT name, age FROM test_u.test_default
+DEBUG:  monetdb_fdw: commit remote transaction
  name | age 
 ------+-----
  zm   |  22
@@ -384,7 +394,7 @@ DEBUG:  drop auto-cascades to type test_default[]
 DEBUG:  drop auto-cascades to default value for column name of foreign table test_default
 -- test IMPORT FOREIGN SCHEMA ... LIMIT TO
 IMPORT FOREIGN SCHEMA "test_u" limit to (test_default) from server foreign_server into public;
-DEBUG:  monetdb: host: 127.0.0.1 port: 50000 user: test_u password: test_u dbname: test
+DEBUG:  monetdb_fdw: begin remote transaction
 DEBUG:  monetdb_fdw remote query is: SELECT 1 FROM sys.schemas WHERE name = 'test_u'
 DEBUG:  monetdb_fdw remote query is: 
 SELECT t.name as table_name, 
@@ -405,6 +415,7 @@ CREATE FOREIGN TABLE test_default (
   age INTEGER
 ) SERVER foreign_server
 OPTIONS (schema_name 'test_u', table_name 'test_default');
+DEBUG:  monetdb_fdw: commit remote transaction
 \d+ test_default
                                                   Foreign table "public.test_default"
  Column |         Type          | Collation | Nullable |         Default         | FDW options | Storage  | Stats target | Description 
@@ -415,8 +426,9 @@ Server: foreign_server
 FDW options: (schema_name 'test_u', table_name 'test_default')
 
 SELECT * FROM test_default;
-DEBUG:  monetdb: host: 127.0.0.1 port: 50000 user: test_u password: test_u dbname: test
+DEBUG:  monetdb_fdw: begin remote transaction
 DEBUG:  monetdb_fdw remote query is: SELECT name, age FROM test_u.test_default
+DEBUG:  monetdb_fdw: commit remote transaction
  name | age 
 ------+-----
  zm   |  22
@@ -446,7 +458,7 @@ DEBUG:  monetdb_fdw remote query is: CREATE TABLE orders (
 (1 row)
 
 IMPORT FOREIGN SCHEMA "test_u" limit to (orders) from server foreign_server into public;
-DEBUG:  monetdb: host: 127.0.0.1 port: 50000 user: test_u password: test_u dbname: test
+DEBUG:  monetdb_fdw: begin remote transaction
 DEBUG:  monetdb_fdw remote query is: SELECT 1 FROM sys.schemas WHERE name = 'test_u'
 DEBUG:  monetdb_fdw remote query is: 
 SELECT t.name as table_name, 
@@ -470,6 +482,7 @@ CREATE FOREIGN TABLE orders (
   quantity DECIMAL(18,3)
 ) SERVER foreign_server
 OPTIONS (schema_name 'test_u', table_name 'orders');
+DEBUG:  monetdb_fdw: commit remote transaction
 \dE+ orders
                                 List of relations
  Schema |  Name  |     Type      |  Owner   | Persistence |  Size   | Description 
@@ -491,43 +504,46 @@ FDW options: (schema_name 'test_u', table_name 'orders')
 
 INSERT INTO orders (order_id, product_id, customer_email, order_date, quantity)
 VALUES (1, 101, 'john.doe@example.com', '2025-01-01', 5);
-DEBUG:  monetdb: host: 127.0.0.1 port: 50000 user: test_u password: test_u dbname: test
+DEBUG:  monetdb_fdw: begin remote transaction
 DEBUG:  monetdb_fdw remote prepare query is: INSERT INTO test_u.orders(order_id, product_id, customer_email, order_date, quantity) VALUES (?, ?, ?, ?, ?)
-DEBUG:  monetdb_fdw bind value0: 1.000
-DEBUG:  monetdb_fdw bind value1: 101.000
-DEBUG:  monetdb_fdw bind value2: john.doe@example.com
-DEBUG:  monetdb_fdw bind value3: 2025-01-01
-DEBUG:  monetdb_fdw bind value4: 5.000
+DEBUG:  monetdb_fdw bind value[0]: 1.000
+DEBUG:  monetdb_fdw bind value[1]: 101.000
+DEBUG:  monetdb_fdw bind value[2]: john.doe@example.com
+DEBUG:  monetdb_fdw bind value[3]: 2025-01-01
+DEBUG:  monetdb_fdw bind value[4]: 5.000
+DEBUG:  monetdb_fdw: commit remote transaction
 INSERT INTO orders (order_id, product_id, customer_email, order_date, quantity)
 VALUES (2, 102, 'jane.smith@example.com', '2025-02-15', 3);
-DEBUG:  monetdb: host: 127.0.0.1 port: 50000 user: test_u password: test_u dbname: test
+DEBUG:  monetdb_fdw: begin remote transaction
 DEBUG:  monetdb_fdw remote prepare query is: INSERT INTO test_u.orders(order_id, product_id, customer_email, order_date, quantity) VALUES (?, ?, ?, ?, ?)
-DEBUG:  monetdb_fdw bind value0: 2.000
-DEBUG:  monetdb_fdw bind value1: 102.000
-DEBUG:  monetdb_fdw bind value2: jane.smith@example.com
-DEBUG:  monetdb_fdw bind value3: 2025-02-15
-DEBUG:  monetdb_fdw bind value4: 3.000
+DEBUG:  monetdb_fdw bind value[0]: 2.000
+DEBUG:  monetdb_fdw bind value[1]: 102.000
+DEBUG:  monetdb_fdw bind value[2]: jane.smith@example.com
+DEBUG:  monetdb_fdw bind value[3]: 2025-02-15
+DEBUG:  monetdb_fdw bind value[4]: 3.000
+DEBUG:  monetdb_fdw: commit remote transaction
 UPDATE orders
 SET quantity = 10
 WHERE order_id = 1 AND product_id = 101;
-DEBUG:  monetdb: host: 127.0.0.1 port: 50000 user: test_u password: test_u dbname: test
-DEBUG:  monetdb: host: 127.0.0.1 port: 50000 user: test_u password: test_u dbname: test
+DEBUG:  monetdb_fdw: begin remote transaction
 DEBUG:  monetdb_fdw remote query is: SELECT order_id, product_id, customer_email, order_date, quantity FROM test_u.orders WHERE ((order_id = 1)) AND ((product_id = 101)) /* FOR UPDATE */
 DEBUG:  monetdb_fdw remote prepare query is: UPDATE test_u.orders SET quantity = ? WHERE order_id = ? AND product_id = ?
-DEBUG:  monetdb_fdw bind value0: 10.000
-DEBUG:  monetdb_fdw bind value1: 1.000
-DEBUG:  monetdb_fdw bind value2: 101.000
+DEBUG:  monetdb_fdw bind value[0]: 10.000
+DEBUG:  monetdb_fdw bind value[1]: 1.000
+DEBUG:  monetdb_fdw bind value[2]: 101.000
+DEBUG:  monetdb_fdw: commit remote transaction
 DELETE FROM orders
 WHERE order_id = 2 AND product_id = 102;
-DEBUG:  monetdb: host: 127.0.0.1 port: 50000 user: test_u password: test_u dbname: test
-DEBUG:  monetdb: host: 127.0.0.1 port: 50000 user: test_u password: test_u dbname: test
+DEBUG:  monetdb_fdw: begin remote transaction
 DEBUG:  monetdb_fdw remote query is: SELECT order_id, product_id FROM test_u.orders WHERE ((order_id = 2)) AND ((product_id = 102)) /* FOR UPDATE */
 DEBUG:  monetdb_fdw remote prepare query is: DELETE FROM test_u.orders WHERE order_id = ? AND product_id = ?
-DEBUG:  monetdb_fdw bind value0: 2.000
-DEBUG:  monetdb_fdw bind value1: 102.000
+DEBUG:  monetdb_fdw bind value[0]: 2.000
+DEBUG:  monetdb_fdw bind value[1]: 102.000
+DEBUG:  monetdb_fdw: commit remote transaction
 SELECT * FROM orders; 
-DEBUG:  monetdb: host: 127.0.0.1 port: 50000 user: test_u password: test_u dbname: test
+DEBUG:  monetdb_fdw: begin remote transaction
 DEBUG:  monetdb_fdw remote query is: SELECT order_id, product_id, customer_email, order_date, quantity FROM test_u.orders
+DEBUG:  monetdb_fdw: commit remote transaction
  order_id | product_id |    customer_email    | order_date | quantity 
 ----------+------------+----------------------+------------+----------
     1.000 |    101.000 | john.doe@example.com | 01-01-2025 |   10.000

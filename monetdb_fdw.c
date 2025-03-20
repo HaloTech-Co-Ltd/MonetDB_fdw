@@ -59,16 +59,6 @@
 
 PG_MODULE_MAGIC;
 
-#define die(dbh,hdl)																\
-			do {																	\
-				if (hdl)															\
-					elog(ERROR, "[MonetDB ERROR] %s", mapi_result_error(hdl)); 	\
-				else if (dbh)														\
-					elog(ERROR, "[MonetDB ERROR] %s", mapi_error_str(dbh));			\
-				else																\
-					elog(ERROR, "command failed\n"); 								\
-			} while (0)
-
 /* Default CPU cost to start up a foreign query. */
 #define DEFAULT_FDW_STARTUP_COST	100.0
 
@@ -1400,13 +1390,6 @@ MonetDB_BeginForeignScan(ForeignScanState *node, int eflags)
 	UserMapping *user;
 	int			rtindex;
 	int			numParams;
-	char 		*host = NULL;        
-	char 		*port = NULL;         
-	char 		*user_str = NULL;          
-	char 		*password = NULL;         
-	char 		*dbname = NULL;
-	List	   	*options = NIL;
-	ListCell  	*cell = NULL;
 	ForeignServer *server = NULL;
 
 	/*
@@ -1430,32 +1413,12 @@ MonetDB_BeginForeignScan(ForeignScanState *node, int eflags)
 	table = GetForeignTable(rte->relid);
 	user = GetUserMapping(userid, table->serverid);
 	server = GetForeignServer(table->serverid);
-	options = list_concat(options, server->options);
-	options = list_concat(options, user->options);
 
-	foreach(cell, options)
-	{
-		DefElem    *def = (DefElem *) lfirst(cell);
-
-		if (strcmp(def->defname, "host") == 0)
-			host = defGetString(def);
-		else if (strcmp(def->defname, "port") == 0)
-			port = defGetString(def);
-		else if (strcmp(def->defname, "user") == 0)
-			user_str = defGetString(def);
-		else if (strcmp(def->defname, "password") == 0)
-			password = defGetString(def);
-		else if (strcmp(def->defname, "dbname") == 0)
-			dbname = defGetString(def);
-	}
-	list_free(options);
-	
-	elog(DEBUG2, "monetdb: host: %s port: %s user: %s password: %s dbname: %s", host, port, user_str, password, dbname);
 	/*
 	 * Get connection to the foreign server.  Connection manager will
 	 * establish new connection if necessary.
 	 */
-	fsstate->conn = mapi_connect(host, atoi(port), user_str, password, "sql", dbname);
+	fsstate->conn = GetConnection(user, server);
 
 	/* Get private info created by planner functions. */
 	fsstate->query = strVal(list_nth(fsplan->fdw_private,
@@ -1529,7 +1492,6 @@ MonetDB_IterateForeignScan(ForeignScanState *node)
 				die(fsstate->conn, fsstate->hdl);
 			if (mapi_close_handle(fsstate->hdl) != MOK)
 				die(fsstate->conn, fsstate->hdl);
-			mapi_destroy(fsstate->conn);
 		}
 	}
 
@@ -1583,11 +1545,7 @@ MonetDB_EndForeignScan(ForeignScanState *node)
 		return;
 
 	/* Release remote connection */
-	if (mapi_error(fsstate->conn))
-		die(fsstate->conn, fsstate->hdl);
-	if (mapi_close_handle(fsstate->hdl) != MOK)
-		die(fsstate->conn, fsstate->hdl);
-	mapi_destroy(fsstate->conn);
+	ReleaseConnection(fsstate->conn);
 	fsstate->conn = NULL;
 
 	/* MemoryContexts will be deleted automatically. */
@@ -1929,11 +1887,7 @@ MonetDB_EndForeignModify(EState *estate,
 		return;
 
 	/* Release remote connection */
-	if (mapi_error(fmstate->conn))
-		die(fmstate->conn, fmstate->hdl);
-	if (mapi_close_handle(fmstate->hdl) != MOK)
-		die(fmstate->conn, fmstate->hdl);
-	mapi_destroy(fmstate->conn);
+	ReleaseConnection(fmstate->conn);
 	fmstate->conn = NULL;
 }
 
@@ -2231,12 +2185,6 @@ MonetDB_ExecForeignTruncate(List *rels,
 	Mapi 	   	conn;
 	MapiHdl 	hdl;
 	UserMapping *user = NULL;
-	char 		*host = NULL;        
-	char 		*port = NULL;         
-	char 		*user_str = NULL;          
-	char 		*password = NULL;         
-	char 		*dbname = NULL;
-	List	   	*options = NIL;
 	ForeignServer *fserver = NULL;
 
 	/*
@@ -2308,45 +2256,18 @@ MonetDB_ExecForeignTruncate(List *rels,
 	 */
 	user = GetUserMapping(GetUserId(), serverid);
 	fserver = GetForeignServer(serverid);
-	options = list_concat(options, fserver->options);
-	options = list_concat(options, user->options);
 
-	foreach(lc, options)
-	{
-		DefElem    *def = (DefElem *) lfirst(lc);
-
-		if (strcmp(def->defname, "host") == 0)
-			host = defGetString(def);
-		else if (strcmp(def->defname, "port") == 0)
-			port = defGetString(def);
-		else if (strcmp(def->defname, "user") == 0)
-			user_str = defGetString(def);
-		else if (strcmp(def->defname, "password") == 0)
-			password = defGetString(def);
-		else if (strcmp(def->defname, "dbname") == 0)
-			dbname = defGetString(def);
-	}
-	list_free(options);
-	
-	elog(DEBUG2, "monetdb: host: %s port: %s user: %s password: %s dbname: %s", host, port, user_str, password, dbname);
 	/* Construct the TRUNCATE command string */
 	initStringInfo(&sql);
 	deparseTruncateSql(&sql, rels, behavior, restart_seqs);
 	elog(DEBUG2, "monetdb_fdw remote query is: %s", sql.data);
 	
 	/* Issue the TRUNCATE command to remote server */
-	conn = mapi_connect(host, atoi(port), user_str, password, "sql", dbname);
+	conn = GetConnection(user, fserver);
 	if ((hdl = mapi_query(conn, sql.data)) == NULL || mapi_error(conn))
 		die(conn, hdl);
 
 	pfree(sql.data);
-
-	/* clear */
-	if (mapi_error(conn))
-		die(conn, hdl);
-	if (mapi_close_handle(hdl) != MOK)
-		die(conn, hdl);
-	mapi_destroy(conn);
 }
 
 /*
@@ -3128,12 +3049,6 @@ MonetDB_ImportForeignSchema(ImportForeignSchemaStmt *stmt, Oid serverOid)
 	int			numrows,
 				i;
 	ListCell   *lc;
-	char 		*host = NULL;        
-	char 		*port = NULL;         
-	char 		*user_str = NULL;          
-	char 		*password = NULL;         
-	char 		*dbname = NULL;
-	List	   	*options = NIL;
 
 	/*
 	 * Get connection to the foreign server.  Connection manager will
@@ -3141,29 +3056,7 @@ MonetDB_ImportForeignSchema(ImportForeignSchemaStmt *stmt, Oid serverOid)
 	 */
 	server = GetForeignServer(serverOid);
 	mapping = GetUserMapping(GetUserId(), server->serverid);
-
-	options = list_concat(options, server->options);
-	options = list_concat(options, mapping->options);
-	foreach(lc, options)
-	{
-		DefElem    *def = (DefElem *) lfirst(lc);
-
-		if (strcmp(def->defname, "host") == 0)
-			host = defGetString(def);
-		else if (strcmp(def->defname, "port") == 0)
-			port = defGetString(def);
-		else if (strcmp(def->defname, "user") == 0)
-			user_str = defGetString(def);
-		else if (strcmp(def->defname, "password") == 0)
-			password = defGetString(def);
-		else if (strcmp(def->defname, "dbname") == 0)
-			dbname = defGetString(def);
-	}
-	list_free(options);
-	elog(DEBUG2, "monetdb: host: %s port: %s user: %s password: %s dbname: %s", host, port, user_str, password, dbname);
-	
-	/* Issue the TRUNCATE command to remote server */
-	conn = mapi_connect(host, atoi(port), user_str, password, "sql", dbname);
+	conn = GetConnection(mapping, server);
 
 	/* Create workspace for strings */
 	initStringInfo(&buf);
@@ -3321,13 +3214,6 @@ MonetDB_ImportForeignSchema(ImportForeignSchemaStmt *stmt, Oid serverOid)
 		commands = lappend(commands, pstrdup(buf.data));
 		elog(DEBUG2, "postgres execute query is: \n%s", buf.data);
 	}
-
-	/* clear */
-	if (mapi_error(conn))
-		die(conn, hdl);
-	if (mapi_close_handle(hdl) != MOK)
-		die(conn, hdl);
-	mapi_destroy(conn);
 
 	return commands;
 }
@@ -4715,13 +4601,6 @@ static MonetdbFdwModifyState *create_foreign_modify(EState *estate,
 	Oid			typefnoid;
 	bool		isvarlena;
 	ListCell   *lc;
-	char 		*host = NULL;        
-	char 		*port = NULL;         
-	char 		*user_str = NULL;          
-	char 		*password = NULL;         
-	char 		*dbname = NULL;
-	List	   	*options = NIL;
-	ListCell  	*cell = NULL;
 	ForeignServer *server = NULL;
 
 	/* Begin constructing MonetdbFdwModifyState. */
@@ -4738,32 +4617,12 @@ static MonetdbFdwModifyState *create_foreign_modify(EState *estate,
 	/* Open connection; report that we'll create a prepared statement. */
 	user = GetUserMapping(userid, table->serverid);
 	server = GetForeignServer(table->serverid);
-	options = list_concat(options, server->options);
-	options = list_concat(options, user->options);
 
-	foreach(cell, options)
-	{
-		DefElem    *def = (DefElem *) lfirst(cell);
-
-		if (strcmp(def->defname, "host") == 0)
-			host = defGetString(def);
-		else if (strcmp(def->defname, "port") == 0)
-			port = defGetString(def);
-		else if (strcmp(def->defname, "user") == 0)
-			user_str = defGetString(def);
-		else if (strcmp(def->defname, "password") == 0)
-			password = defGetString(def);
-		else if (strcmp(def->defname, "dbname") == 0)
-			dbname = defGetString(def);
-	}
-	list_free(options);
-	
-	elog(DEBUG2, "monetdb: host: %s port: %s user: %s password: %s dbname: %s", host, port, user_str, password, dbname);
 	/*
 	 * Get connection to the foreign server.  Connection manager will
 	 * establish new connection if necessary.
 	 */
-	fmstate->conn = mapi_connect(host, atoi(port), user_str, password, "sql", dbname);
+	fmstate->conn = GetConnection(user, server);
 
 	fmstate->p_name = NULL;		/* prepared statement not made yet */
 
@@ -4889,9 +4748,6 @@ static TupleTableSlot **execute_foreign_modify(EState *estate,
 		   operation == CMD_DELETE);
 
 	elog(DEBUG2, "monetdb_fdw remote prepare query is: %s", fmstate->query);
-	// /* First, process a pending asynchronous request, if any. */
-	// if (fmstate->conn_state->pendingAreq)
-	// 	process_pending_request(fmstate->conn_state->pendingAreq);
 
 	/*
 	 * If the existing query was deparsed and prepared for a different number
@@ -4899,9 +4755,6 @@ static TupleTableSlot **execute_foreign_modify(EState *estate,
 	 */
 	if (operation == CMD_INSERT && fmstate->num_slots != *numSlots)
 	{
-		// /* Destroy the prepared statement created previously */
-		// if (fmstate->p_name)
-		// 	deallocate_query(fmstate);
 
 		/* Build INSERT string with numSlots records in its VALUES clause. */
 		initStringInfo(&sql);
@@ -4913,10 +4766,6 @@ static TupleTableSlot **execute_foreign_modify(EState *estate,
 		fmstate->query = sql.data;
 		fmstate->num_slots = *numSlots;
 	}
-
-	/* Set up the prepared statement on the remote server, if we didn't yet */
-	// if (!fmstate->p_name)
-	// 	prepare_foreign_modify(fmstate);
 
 	/*
 	 * For UPDATE/DELETE, get the key that was passed up as a resjunk column
@@ -4948,7 +4797,7 @@ static TupleTableSlot **execute_foreign_modify(EState *estate,
 	for(int i = 0; i < fmstate->p_nums; i++)
 	{
 		/* bind value */
-		elog(DEBUG2, "monetdb_fdw bind value%d: %s", i, (char *) p_values[i]);
+		elog(DEBUG2, "monetdb_fdw bind value[%d]: %s", i, (char *) p_values[i]);
 		mapi_param_string(result, i, MAPI_VARCHAR, (char *) p_values[i], NULL);
 	}
 
@@ -5175,9 +5024,9 @@ monetdb_execute(PG_FUNCTION_ARGS)
 	/* clear */
 	heap_freetuple(tup);
 	if (mapi_error(conn))
-		die(conn, hdl);
+		error_info(conn, hdl);
 	if (mapi_close_handle(hdl) != MOK)
-		die(conn, hdl);
+		error_info(conn, hdl);
 	mapi_destroy(conn);
 	PG_RETURN_VOID();
 }
