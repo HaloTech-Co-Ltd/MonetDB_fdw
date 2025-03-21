@@ -3171,6 +3171,14 @@ MonetDB_ImportForeignSchema(ImportForeignSchemaStmt *stmt, Oid serverOid)
 			char	*attdefault = mapi_fetch_field(hdl, 4);
 			char	*attispk 	= mapi_fetch_field(hdl, 5);
 
+			/* 
+			 * At import time, if the MonetDB type may not be supported by PostgreSQL, 
+			 * then we should do the type mapping in advance, 
+			 * either by ignoring precision or by repointing to the most appropriate data type. 
+			 */
+			if (!strncmp("JSON", typename, strlen("JSON")))
+				typename = pstrdup("JSON");
+
 			if (first_item)
 				first_item = false;
 			else

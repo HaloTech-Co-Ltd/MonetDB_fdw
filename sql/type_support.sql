@@ -129,6 +129,59 @@ SELECT * FROM time_types;
 DROP FOREIGN TABLE Time_Types;
 SELECT monetdb_execute('foreign_server', $$DROP TABLE Time_Types$$);
 
+select monetdb_execute('foreign_server', $$CREATE TABLE json_example (c1 JSON, c2 JSON(512) NOT NULL)$$);
+IMPORT FOREIGN SCHEMA "test_u" limit to (json_example) from server foreign_server into public; 
+\d+ json_example
+
+INSERT INTO json_example values(
+'{ "store": {
+    "book": [
+      { "category": "reference",
+        "author": "Nigel Rees",
+        "title": "Sayings of the Century",
+        "price": 8.95
+      },
+      { "category": "fiction",
+        "author": "Evelyn Waugh",
+        "title": "Sword of Honour",
+        "price": 12.99
+      }
+    ],
+    "bicycle": {
+      "color": "red",
+      "price": 19.95
+    }
+  }
+}',
+
+'{ "store": {
+    "book": [
+      { "category": "reference",
+        "author": "Nigel Rees",
+        "title": "Sayings of the Century",
+        "price": 8.95
+      },
+      { "category": "fiction",
+        "author": "Evelyn Waugh",
+        "title": "Sword of Honour",
+        "price": 12.99
+      }
+    ],
+    "bicycle": {
+      "color": "red",
+      "price": 19.95
+    }
+  }
+}');
+
+SELECT * FROM json_example;
+SELECT jsonb_path_query(c1::jsonb, '$.store') FROM json_example;  -- use postgresql function
+
+CREATE TABLE json_example2(h JSON(512));      -- error
+
+DROP FOREIGN TABLE json_example;
+SELECT monetdb_execute('foreign_server', $$DROP TABLE json_example$$);
+
 SELECT monetdb_execute('foreign_server', $$ALTER USER test_u SET SCHEMA sys$$);
 SELECT monetdb_execute('foreign_server', $$DROP SCHEMA test_u$$);
 SELECT monetdb_execute('foreign_server', $$DROP USER test_u$$);
