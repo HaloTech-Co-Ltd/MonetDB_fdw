@@ -194,6 +194,15 @@ SELECT count(*) FROM uuid_example;
 DROP FOREIGN TABLE uuid_example;
 SELECT monetdb_execute('foreign_server', $$DROP TABLE uuid_example$$);
 
+select monetdb_execute('foreign_server', $$CREATE TABLE inet_example(a inet)$$);
+IMPORT FOREIGN SCHEMA "test_u" limit to (inet_example) from server foreign_server into public; 
+\d+ inet_example
+
+INSERT INTO inet_example VALUES('192.168.1.5/24');
+SELECT * FROM inet_example;
+DROP FOREIGN TABLE inet_example;
+SELECT monetdb_execute('foreign_server', $$DROP TABLE inet_example$$);
+
 SELECT monetdb_execute('foreign_server', $$ALTER USER test_u SET SCHEMA sys$$);
 SELECT monetdb_execute('foreign_server', $$DROP SCHEMA test_u$$);
 SELECT monetdb_execute('foreign_server', $$DROP USER test_u$$);
