@@ -273,6 +273,84 @@ SELECT monetdb_execute('foreign_server', $$DROP TABLE Time_Types$$);
  
 (1 row)
 
+select monetdb_execute('foreign_server', $$CREATE TABLE json_example (c1 JSON, c2 JSON(512) NOT NULL)$$);
+ monetdb_execute 
+-----------------
+ 
+(1 row)
+
+IMPORT FOREIGN SCHEMA "test_u" limit to (json_example) from server foreign_server into public; 
+\d+ json_example
+                                 Foreign table "public.json_example"
+ Column | Type | Collation | Nullable | Default | FDW options | Storage  | Stats target | Description 
+--------+------+-----------+----------+---------+-------------+----------+--------------+-------------
+ c1     | json |           |          |         |             | extended |              | 
+ c2     | json |           | not null |         |             | extended |              | 
+Server: foreign_server
+FDW options: (schema_name 'test_u', table_name 'json_example')
+
+INSERT INTO json_example values(
+'{ "store": {
+    "book": [
+      { "category": "reference",
+        "author": "Nigel Rees",
+        "title": "Sayings of the Century",
+        "price": 8.95
+      },
+      { "category": "fiction",
+        "author": "Evelyn Waugh",
+        "title": "Sword of Honour",
+        "price": 12.99
+      }
+    ],
+    "bicycle": {
+      "color": "red",
+      "price": 19.95
+    }
+  }
+}',
+'{ "store": {
+    "book": [
+      { "category": "reference",
+        "author": "Nigel Rees",
+        "title": "Sayings of the Century",
+        "price": 8.95
+      },
+      { "category": "fiction",
+        "author": "Evelyn Waugh",
+        "title": "Sword of Honour",
+        "price": 12.99
+      }
+    ],
+    "bicycle": {
+      "color": "red",
+      "price": 19.95
+    }
+  }
+}');
+SELECT * FROM json_example;
+                                                                                                                        c1                                                                                                                        |                                                                                                                        c2                                                                                                                        
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ {"store":{"book":[{"category":"reference","author":"Nigel Rees","title":"Sayings of the Century","price":8.95},{"category":"fiction","author":"Evelyn Waugh","title":"Sword of Honour","price":12.99}],"bicycle":{"color":"red","price":19.95}}} | {"store":{"book":[{"category":"reference","author":"Nigel Rees","title":"Sayings of the Century","price":8.95},{"category":"fiction","author":"Evelyn Waugh","title":"Sword of Honour","price":12.99}],"bicycle":{"color":"red","price":19.95}}}
+(1 row)
+
+SELECT jsonb_path_query(c1::jsonb, '$.store') FROM json_example;  -- use postgresql function
+                                                                                                                      jsonb_path_query                                                                                                                       
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ {"book": [{"price": 8.95, "title": "Sayings of the Century", "author": "Nigel Rees", "category": "reference"}, {"price": 12.99, "title": "Sword of Honour", "author": "Evelyn Waugh", "category": "fiction"}], "bicycle": {"color": "red", "price": 19.95}}
+(1 row)
+
+CREATE TABLE json_example2(h JSON(512));      -- error
+ERROR:  type modifier is not allowed for type "json"
+LINE 1: CREATE TABLE json_example2(h JSON(512));
+                                     ^
+DROP FOREIGN TABLE json_example;
+SELECT monetdb_execute('foreign_server', $$DROP TABLE json_example$$);
+ monetdb_execute 
+-----------------
+ 
+(1 row)
+
 SELECT monetdb_execute('foreign_server', $$ALTER USER test_u SET SCHEMA sys$$);
  monetdb_execute 
 -----------------
