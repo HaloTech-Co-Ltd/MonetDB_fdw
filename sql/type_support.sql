@@ -64,6 +64,7 @@ DROP FOREIGN TABLE Numeric_Types;
 SELECT monetdb_execute('foreign_server', $$DROP TABLE bool_Types$$);
 SELECT monetdb_execute('foreign_server', $$DROP TABLE Numeric_Types$$);
 
+-- test CHAR、VARCHAR、CLOB、TEXT、STRING
 select monetdb_execute('foreign_server', $$CREATE TABLE Character_Types(
 	a CHAR,
 	b CHARACTER(10),
@@ -113,6 +114,7 @@ OPTIONS (schema_name 'test_u', table_name 'Character_Types');
 DROP FOREIGN TABLE Character_Types;
 SELECT monetdb_execute('foreign_server', $$DROP TABLE Character_Types$$);
 
+-- test TIMESTAMP、TIMESTAMP WITH TIME ZONE、DATE、TIME、TIME WITH TIME ZONE
 select monetdb_execute('foreign_server', $$CREATE TABLE Time_Types(
 	a TIMESTAMP,
 	b TIMESTAMP WITH TIME ZONE,
@@ -129,6 +131,7 @@ SELECT * FROM time_types;
 DROP FOREIGN TABLE Time_Types;
 SELECT monetdb_execute('foreign_server', $$DROP TABLE Time_Types$$);
 
+-- test JSON
 select monetdb_execute('foreign_server', $$CREATE TABLE json_example (c1 JSON, c2 JSON(512) NOT NULL)$$);
 IMPORT FOREIGN SCHEMA "test_u" limit to (json_example) from server foreign_server into public; 
 \d+ json_example
@@ -182,6 +185,7 @@ CREATE TABLE json_example2(h JSON(512));      -- error
 DROP FOREIGN TABLE json_example;
 SELECT monetdb_execute('foreign_server', $$DROP TABLE json_example$$);
 
+-- test UUID
 select monetdb_execute('foreign_server', $$CREATE TABLE uuid_example(a UUID)$$);
 IMPORT FOREIGN SCHEMA "test_u" limit to (uuid_example) from server foreign_server into public; 
 \d+ uuid_example
@@ -194,6 +198,7 @@ SELECT count(*) FROM uuid_example;
 DROP FOREIGN TABLE uuid_example;
 SELECT monetdb_execute('foreign_server', $$DROP TABLE uuid_example$$);
 
+-- tes INET
 select monetdb_execute('foreign_server', $$CREATE TABLE inet_example(a inet)$$);
 IMPORT FOREIGN SCHEMA "test_u" limit to (inet_example) from server foreign_server into public; 
 \d+ inet_example
@@ -203,7 +208,8 @@ SELECT * FROM inet_example;
 DROP FOREIGN TABLE inet_example;
 SELECT monetdb_execute('foreign_server', $$DROP TABLE inet_example$$);
 
-select monetdb_execute('foreign_server', $$CREATE TABLE URL_example (c1 URL, c2 URL(512) NOT NULL)$$);
+-- test URL
+SELECT monetdb_execute('foreign_server', $$CREATE TABLE URL_example (c1 URL, c2 URL(512) NOT NULL)$$);
 IMPORT FOREIGN SCHEMA "test_u" limit to (URL_example) from server foreign_server into public; 
 \d+ URL_example
 

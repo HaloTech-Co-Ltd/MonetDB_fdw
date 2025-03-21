@@ -139,6 +139,7 @@ SELECT monetdb_execute('foreign_server', $$DROP TABLE Numeric_Types$$);
  
 (1 row)
 
+-- test CHAR、VARCHAR、CLOB、TEXT、STRING
 select monetdb_execute('foreign_server', $$CREATE TABLE Character_Types(
 	a CHAR,
 	b CHARACTER(10),
@@ -234,6 +235,7 @@ SELECT monetdb_execute('foreign_server', $$DROP TABLE Character_Types$$);
  
 (1 row)
 
+-- test TIMESTAMP、TIMESTAMP WITH TIME ZONE、DATE、TIME、TIME WITH TIME ZONE
 select monetdb_execute('foreign_server', $$CREATE TABLE Time_Types(
 	a TIMESTAMP,
 	b TIMESTAMP WITH TIME ZONE,
@@ -273,6 +275,7 @@ SELECT monetdb_execute('foreign_server', $$DROP TABLE Time_Types$$);
  
 (1 row)
 
+-- test JSON
 select monetdb_execute('foreign_server', $$CREATE TABLE json_example (c1 JSON, c2 JSON(512) NOT NULL)$$);
  monetdb_execute 
 -----------------
@@ -351,6 +354,7 @@ SELECT monetdb_execute('foreign_server', $$DROP TABLE json_example$$);
  
 (1 row)
 
+-- test UUID
 select monetdb_execute('foreign_server', $$CREATE TABLE uuid_example(a UUID)$$);
  monetdb_execute 
 -----------------
@@ -388,6 +392,7 @@ SELECT monetdb_execute('foreign_server', $$DROP TABLE uuid_example$$);
  
 (1 row)
 
+-- tes INET
 select monetdb_execute('foreign_server', $$CREATE TABLE inet_example(a inet)$$);
  monetdb_execute 
 -----------------
@@ -417,7 +422,8 @@ SELECT monetdb_execute('foreign_server', $$DROP TABLE inet_example$$);
  
 (1 row)
 
-select monetdb_execute('foreign_server', $$CREATE TABLE URL_example (c1 URL, c2 URL(512) NOT NULL)$$);
+-- test URL
+SELECT monetdb_execute('foreign_server', $$CREATE TABLE URL_example (c1 URL, c2 URL(512) NOT NULL)$$);
  monetdb_execute 
 -----------------
  
