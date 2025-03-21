@@ -30,7 +30,7 @@ make && make install
 
 ```sql
 -- 安装monetdb_fdw插件
-CREATE EXTENSION monetdb_fdw；
+CREATE EXTENSION monetdb_fdw;
 -- 创建SERVER
 CREATE SERVER foreign_server FOREIGN DATA WRAPPER monetdb_fdw
 OPTIONS (host '127.0.0.1', port '50000', dbname 'test');
