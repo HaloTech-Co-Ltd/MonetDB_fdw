@@ -112,6 +112,23 @@ OPTIONS (schema_name 'test_u', table_name 'Character_Types');
 \d+ Character_Types
 DROP FOREIGN TABLE Character_Types;
 SELECT monetdb_execute('foreign_server', $$DROP TABLE Character_Types$$);
+
+select monetdb_execute('foreign_server', $$CREATE TABLE Time_Types(
+	a TIMESTAMP,
+	b TIMESTAMP WITH TIME ZONE,
+	c DATE,
+	d TIME,
+	e TIME WITH TIME ZONE
+)$$);
+
+IMPORT FOREIGN SCHEMA "test_u" limit to (Time_Types) from server foreign_server into public; 
+\d+ Time_Types
+
+INSERT INTO time_types VALUES('2014-04-24 17:12:12.415', '2014-04-24 17:12:12.415 -02:00', '2014-04-24', '17:12:12.415', '17:12:12.415 -02:00');
+SELECT * FROM time_types;
+DROP FOREIGN TABLE Time_Types;
+SELECT monetdb_execute('foreign_server', $$DROP TABLE Time_Types$$);
+
 SELECT monetdb_execute('foreign_server', $$ALTER USER test_u SET SCHEMA sys$$);
 SELECT monetdb_execute('foreign_server', $$DROP SCHEMA test_u$$);
 SELECT monetdb_execute('foreign_server', $$DROP USER test_u$$);

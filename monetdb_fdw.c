@@ -4893,15 +4893,28 @@ convert_prep_stmt_params(MonetdbFdwModifyState *fmstate,
 					p_values[pindex] = NULL;
 				else
 				{
+					/* 
+					 * There are some types of results that are not recognized by MonetDB,
+					 * and we need to make simple changes to achieve the purpose
+					 */
 					char 	*val = OutputFunctionCall(&fmstate->p_flinfo[j], value);
-					/* Boolean types require additional processing */
 					if (attr->atttypid == BOOLOID)
 					{
-						/* [MonetDB ERROR] conversion of string 't' to type bit failed. */
+						/* 
+						 * [MonetDB RESULT ERROR] conversion of string 't' to type bit failed. 
+						 */
 						if (!strcmp(val, "t"))
 							val = pstrdup("true");
 						else if (!strcmp(val, "f"))
 							val = pstrdup("false");
+					}
+					else if (attr->atttypid == TIMESTAMPTZOID || attr->atttypid == TIMETZOID)
+					{
+						/* 
+						 * [MonetDB RESULT ERROR] Timestamp '2014-04-25 03:12:12.415+08' has incorrect format 
+						 * [MonetDB RESULT ERROR] Daytime '17:12:12.415-02' has incorrect format
+						 */
+						val = psprintf("%s00", val);
 					}
 
 					p_values[pindex] = val;
