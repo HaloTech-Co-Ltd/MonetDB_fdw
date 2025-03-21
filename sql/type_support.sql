@@ -182,6 +182,18 @@ CREATE TABLE json_example2(h JSON(512));      -- error
 DROP FOREIGN TABLE json_example;
 SELECT monetdb_execute('foreign_server', $$DROP TABLE json_example$$);
 
+select monetdb_execute('foreign_server', $$CREATE TABLE uuid_example(a UUID)$$);
+IMPORT FOREIGN SCHEMA "test_u" limit to (uuid_example) from server foreign_server into public; 
+\d+ uuid_example
+
+INSERT INTO uuid_example VALUES('26d7a80b-7538-4682-a49a-9d0f9676b765');
+SELECT * FROM uuid_example;
+TRUNCATE uuid_example;
+INSERT INTO uuid_example VALUES(gen_random_uuid());
+SELECT count(*) FROM uuid_example;
+DROP FOREIGN TABLE uuid_example;
+SELECT monetdb_execute('foreign_server', $$DROP TABLE uuid_example$$);
+
 SELECT monetdb_execute('foreign_server', $$ALTER USER test_u SET SCHEMA sys$$);
 SELECT monetdb_execute('foreign_server', $$DROP SCHEMA test_u$$);
 SELECT monetdb_execute('foreign_server', $$DROP USER test_u$$);

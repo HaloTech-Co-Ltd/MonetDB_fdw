@@ -351,6 +351,43 @@ SELECT monetdb_execute('foreign_server', $$DROP TABLE json_example$$);
  
 (1 row)
 
+select monetdb_execute('foreign_server', $$CREATE TABLE uuid_example(a UUID)$$);
+ monetdb_execute 
+-----------------
+ 
+(1 row)
+
+IMPORT FOREIGN SCHEMA "test_u" limit to (uuid_example) from server foreign_server into public; 
+\d+ uuid_example
+                                 Foreign table "public.uuid_example"
+ Column | Type | Collation | Nullable | Default | FDW options | Storage | Stats target | Description 
+--------+------+-----------+----------+---------+-------------+---------+--------------+-------------
+ a      | uuid |           |          |         |             | plain   |              | 
+Server: foreign_server
+FDW options: (schema_name 'test_u', table_name 'uuid_example')
+
+INSERT INTO uuid_example VALUES('26d7a80b-7538-4682-a49a-9d0f9676b765');
+SELECT * FROM uuid_example;
+                  a                   
+--------------------------------------
+ 26d7a80b-7538-4682-a49a-9d0f9676b765
+(1 row)
+
+TRUNCATE uuid_example;
+INSERT INTO uuid_example VALUES(gen_random_uuid());
+SELECT count(*) FROM uuid_example;
+ count 
+-------
+     1
+(1 row)
+
+DROP FOREIGN TABLE uuid_example;
+SELECT monetdb_execute('foreign_server', $$DROP TABLE uuid_example$$);
+ monetdb_execute 
+-----------------
+ 
+(1 row)
+
 SELECT monetdb_execute('foreign_server', $$ALTER USER test_u SET SCHEMA sys$$);
  monetdb_execute 
 -----------------
