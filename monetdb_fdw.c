@@ -3178,6 +3178,8 @@ MonetDB_ImportForeignSchema(ImportForeignSchemaStmt *stmt, Oid serverOid)
 			 */
 			if (!strncmp("JSON", typename, strlen("JSON")))
 				typename = pstrdup("JSON");
+			else if (!strncmp("URL", typename, strlen("URL")))
+				typename = pstrdup("URL");
 
 			if (first_item)
 				first_item = false;

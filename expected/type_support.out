@@ -417,6 +417,40 @@ SELECT monetdb_execute('foreign_server', $$DROP TABLE inet_example$$);
  
 (1 row)
 
+select monetdb_execute('foreign_server', $$CREATE TABLE URL_example (c1 URL, c2 URL(512) NOT NULL)$$);
+ monetdb_execute 
+-----------------
+ 
+(1 row)
+
+IMPORT FOREIGN SCHEMA "test_u" limit to (URL_example) from server foreign_server into public; 
+\d+ URL_example
+                                  Foreign table "public.url_example"
+ Column | Type | Collation | Nullable | Default | FDW options | Storage  | Stats target | Description 
+--------+------+-----------+----------+---------+-------------+----------+--------------+-------------
+ c1     | url  |           |          |         |             | extended |              | 
+ c2     | url  |           | not null |         |             | extended |              | 
+Server: foreign_server
+FDW options: (schema_name 'test_u', table_name 'url_example')
+
+INSERT INTO url_example VALUES('https://github.com/Z-Xiao-M/MonetDB_fdw', 'https://github.com/Z-Xiao-M/MonetDB_fdw');
+SELECT * FROM URL_example;
+                   c1                    |                   c2                    
+-----------------------------------------+-----------------------------------------
+ https://github.com/Z-Xiao-M/MonetDB_fdw | https://github.com/Z-Xiao-M/MonetDB_fdw
+(1 row)
+
+DROP FOREIGN TABLE URL_example;
+SELECT monetdb_execute('foreign_server', $$DROP TABLE URL_example$$);
+ monetdb_execute 
+-----------------
+ 
+(1 row)
+
+CREATE TABLE URL_example(h URL(512));      -- error
+ERROR:  type modifier is not allowed for type "url"
+LINE 1: CREATE TABLE URL_example(h URL(512));
+                                   ^
 SELECT monetdb_execute('foreign_server', $$ALTER USER test_u SET SCHEMA sys$$);
  monetdb_execute 
 -----------------

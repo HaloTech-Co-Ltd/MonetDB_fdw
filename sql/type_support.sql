@@ -203,6 +203,17 @@ SELECT * FROM inet_example;
 DROP FOREIGN TABLE inet_example;
 SELECT monetdb_execute('foreign_server', $$DROP TABLE inet_example$$);
 
+select monetdb_execute('foreign_server', $$CREATE TABLE URL_example (c1 URL, c2 URL(512) NOT NULL)$$);
+IMPORT FOREIGN SCHEMA "test_u" limit to (URL_example) from server foreign_server into public; 
+\d+ URL_example
+
+INSERT INTO url_example VALUES('https://github.com/Z-Xiao-M/MonetDB_fdw', 'https://github.com/Z-Xiao-M/MonetDB_fdw');
+SELECT * FROM URL_example;
+DROP FOREIGN TABLE URL_example;
+SELECT monetdb_execute('foreign_server', $$DROP TABLE URL_example$$);
+
+CREATE TABLE URL_example(h URL(512));      -- error
+
 SELECT monetdb_execute('foreign_server', $$ALTER USER test_u SET SCHEMA sys$$);
 SELECT monetdb_execute('foreign_server', $$DROP SCHEMA test_u$$);
 SELECT monetdb_execute('foreign_server', $$DROP USER test_u$$);
