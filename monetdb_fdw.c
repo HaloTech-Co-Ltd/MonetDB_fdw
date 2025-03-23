@@ -1,13 +1,15 @@
 /*-------------------------------------------------------------------------
  *
  * monetdb_fdw.c
- *		  Foreign-data wrapper for remote MonetDB servers
+ *		  Foreign-data wrapper for remote MonetDB databases
  *
+ * Portions Copyright (c) 2025, Halo Tech Co.,Ltd. All rights reserved.
  * Portions Copyright (c) 2012-2023, PostgreSQL Global Development Group
- * Portions Copyright (c) 2025, zengman
  *
+ * Author: zengman <zengman@halodbtech.com>
+ * 
  * IDENTIFICATION
- *		  contrib/monetdb_fdw/monetdb_fdw.c
+ *		  monetdb_fdw.c
  *
  *-------------------------------------------------------------------------
  */

@@ -4,31 +4,16 @@
  *		  Query deparser for monetdb_fdw
  *
  * This file includes functions that examine query WHERE clauses to see
- * whether they're safe to send to the remote server for execution, as
- * well as functions to construct the query text to be sent.  The latter
- * functionality is annoyingly duplicative of ruleutils.c, but there are
- * enough special considerations that it seems best to keep this separate.
- * One saving grace is that we only need deparse logic for node types that
- * we consider safe to send.
+ * whether they're safe to send to the remote server for execution.
  *
- * We assume that the remote session's search_path is exactly "pg_catalog",
- * and thus we need schema-qualify all and only names outside pg_catalog.
- *
- * We do not consider that it is ever safe to send COLLATE expressions to
- * the remote server: it might not have the same collation names we do.
- * (Later we might consider it safe to send COLLATE "C", but even that would
- * fail on old remote servers.)  An expression is considered safe to send
- * only if all operator/function input collations used in it are traceable to
- * Var(s) of the foreign table.  That implies that if the remote server gets
- * a different answer than we do, the foreign table's columns are not marked
- * with collations that match the remote table's columns, which we can
- * consider to be user error.
- *
+ * 
+ * Portions Copyright (c) 2025, Halo Tech Co.,Ltd. All rights reserved.
  * Portions Copyright (c) 2012-2023, PostgreSQL Global Development Group
- * Portions Copyright (c) 2025, zengman
+ * 
+ * Author: zengman <zengman@halodbtech.com>
  *
  * IDENTIFICATION
- *		  contrib/monetdb_fdw/deparse.c
+ *		  deparse.c
  *
  *-------------------------------------------------------------------------
  */

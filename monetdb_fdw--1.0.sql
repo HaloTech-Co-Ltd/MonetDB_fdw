@@ -1,4 +1,4 @@
-/* contrib/monetdb_fdw/monetdb_fdw--1.0.sql */
+/* monetdb_fdw--1.0.sql */
 
 -- complain if script is sourced in psql, rather than via CREATE EXTENSION
 \echo Use "CREATE EXTENSION monetdb_fdw" to load this file. \quit
