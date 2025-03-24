@@ -13,12 +13,14 @@ MonetDB\_fdw 是基于 Foreign Data Wrapper （FDW） 技术的 PostgreSQL 扩�
 
 #### 源码编译安装
 
+在PGXS上构建
+
 ```sh
 export USE_PGXS=1
 export MONETDB_HOME=<MonetDB installation path>
 export PATH=$MONETDB_HOME/bin:$PATH
 export LD_LIBRARY_PATH=$MONETDB_HOME/lib64:$LD_LIBRARY_PATH
-git clone https://github.com/Z-Xiao-M/MonetDB_fdw.git
+git clone https://github.com/HaloLab001/MonetDB_fdw.git
 cd MonetDB_fdw
 make && make install
 ```
@@ -29,7 +31,7 @@ make && make install
 export MONETDB_HOME=<MonetDB installation path>
 export PATH=$MONETDB_HOME/bin:$PATH
 export LD_LIBRARY_PATH=$MONETDB_HOME/lib64:$LD_LIBRARY_PATH
-git clone https://github.com/Z-Xiao-M/MonetDB_fdw.git <PostgreSQL contrib source path>
+git clone https://github.com/HaloLab001/MonetDB_fdw.git <PostgreSQL contrib source path>
 cd <PostgreSQL contrib source path>/MonetDB_fdw
 make && make install
 ```
@@ -92,7 +94,7 @@ make && make install
 * EXPLAIN
 * IMPORT FOREIGN SCHEMA。
 
-以及相关的RETURNING语句，有趣的是MonetDB的UPDATE ... RETURNING似乎存在[BUG](https://github.com/MonetDB/MonetDB/issues/7623)，所以让我们静待下一个MonetDB版本，请不要在当前系统中使用UPDATE ... RETURNING。
+以及相关的RETURNING语句，有趣的是当前版本的MonetDB在UPDATE ... RETURNING场景暂时还存在[BUG](https://github.com/MonetDB/MonetDB/issues/7623)，所以让我们静待下一个MonetDB版本，请不要在当前系统中使用UPDATE ... RETURNING。
 
 #### 类型
 
