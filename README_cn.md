@@ -13,6 +13,8 @@ MonetDB\_fdw 是基于 Foreign Data Wrapper （FDW） 技术的 PostgreSQL 扩�
 
 #### 源码编译安装
 
+在PGXS上构建
+
 ```sh
 export USE_PGXS=1
 export MONETDB_HOME=<MonetDB installation path>
@@ -92,7 +94,7 @@ make && make install
 * EXPLAIN
 * IMPORT FOREIGN SCHEMA。
 
-以及相关的RETURNING语句，有趣的是MonetDB的UPDATE ... RETURNING似乎存在[BUG](https://github.com/MonetDB/MonetDB/issues/7623)，所以让我们静待下一个MonetDB版本，请不要在当前系统中使用UPDATE ... RETURNING。
+以及相关的RETURNING语句，有趣的是当前版本的MonetDB在UPDATE ... RETURNING场景暂时还存在[BUG](https://github.com/MonetDB/MonetDB/issues/7623)，所以让我们静待下一个MonetDB版本，请不要在当前系统中使用UPDATE ... RETURNING。
 
 #### 类型
 
