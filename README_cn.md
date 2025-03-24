@@ -55,7 +55,7 @@ make && make install
   ```sql
   CREATE USER MAPPING FOR CURRENT_USER SERVER foreign_server OPTIONS (user 'zm', password 'zm');
   ```
-* 在MonetDB中创建一张名为emp的表，这里我们可以使用`monetdb_execute`帮助我们快速实现
+* 在MonetDB中创建一张名为emp的表，这里我们可以使用`monetdb\_execute`帮助我们快速实现
 
   ```sql
   SELECT monetdb_execute('foreign_server', $$CREATE TABLE emp(
