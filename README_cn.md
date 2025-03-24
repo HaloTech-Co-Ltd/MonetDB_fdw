@@ -5,10 +5,11 @@
 MonetDB\_fdw 是基于 Foreign Data Wrapper （FDW） 技术的 PostgreSQL 扩展，可以用来增强`PostgreSQL`的分析能力。
 本项目基于优秀的`postgres_fdw`[https://www.postgresql.org/docs/current/postgres-fdw.html](https://www.postgresql.org/docs/current/postgres-fdw.html)和 `oracle_fdw`([https://github.com/laurenz/oracle\_fdw.git](https://github.com/laurenz/oracle_fdw.git))项目。
 
-#### 运行环境准备
+#### 支持的操作系统和数据库
 
 * RHEL 8/9、CentOS 8/9。
-* PostgreSQL 16版本 或 羲和（Halo）数据库 1.0.16
+* 羲和（Halo）数据库 1.0.16
+* PostgreSQL 16版本 （预计将支持14以上的版本）
 * MonetDB 11.49
 
 #### 源码编译安装
