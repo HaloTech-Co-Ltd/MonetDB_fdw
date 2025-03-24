@@ -104,7 +104,7 @@ IMPORT FOREIGN SCHEMA "zm" limit to (emp) from server foreign_server into public
 * EXPLAIN
 * IMPORT FOREIGN SCHEMA
 
-Be carefull! There is a crash bug of UPDATE ... RETURNING in MonetDB (https://github.com/MonetDB/MonetDB/issues/7623) if table has PK.
+Be careful!!! There is a crash bug of UPDATE ... RETURNING in MonetDB (https://github.com/MonetDB/MonetDB/issues/7623) if table has PK.
 
 #### Supported Types
 
