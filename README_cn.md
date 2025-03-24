@@ -18,7 +18,7 @@ export USE_PGXS=1
 export MONETDB_HOME=<MonetDB installation path>
 export PATH=$MONETDB_HOME/bin:$PATH
 export LD_LIBRARY_PATH=$MONETDB_HOME/lib64:$LD_LIBRARY_PATH
-git clone https://github.com/Z-Xiao-M/MonetDB_fdw.git
+git clone https://github.com/HaloLab001/MonetDB_fdw.git
 cd MonetDB_fdw
 make && make install
 ```
@@ -29,7 +29,7 @@ make && make install
 export MONETDB_HOME=<MonetDB installation path>
 export PATH=$MONETDB_HOME/bin:$PATH
 export LD_LIBRARY_PATH=$MONETDB_HOME/lib64:$LD_LIBRARY_PATH
-git clone https://github.com/Z-Xiao-M/MonetDB_fdw.git <PostgreSQL contrib source path>
+git clone https://github.com/HaloLab001/MonetDB_fdw.git <PostgreSQL contrib source path>
 cd <PostgreSQL contrib source path>/MonetDB_fdw
 make && make install
 ```
@@ -52,7 +52,7 @@ make && make install
   ```sql
   CREATE USER MAPPING FOR CURRENT_USER SERVER foreign_server OPTIONS (user 'zm', password 'zm');
   ```
-* 在MonetDB中创建一张名为emp的表，这里我们可以使用`monetdb_execute`帮助我们快速实现
+* 在MonetDB中创建一张名为emp的表，这里我们可以使用`monetdb\_execute`帮助我们快速实现
 
   ```sql
   SELECT monetdb_execute('foreign_server', $$CREATE TABLE emp(
