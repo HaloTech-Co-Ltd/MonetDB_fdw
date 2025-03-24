@@ -37,23 +37,23 @@ make && make install
 #### 快速上手
 
 * 创建MonetDB_fdw拓展插件
-  
+
   ```sql
   CREATE EXTENSION monetdb_fdw;
   ```
 * 创建外部服务器
-  
+
   ```sql
   CREATE SERVER foreign_server FOREIGN DATA WRAPPER monetdb_fdw
   OPTIONS (host '127.0.0.1', port '50000', dbname 'test');
   ```
 * 创建用户映射
-  
+
   ```sql
   CREATE USER MAPPING FOR CURRENT_USER SERVER foreign_server OPTIONS (user 'zm', password 'zm');
   ```
-* 在MonetDB中创建一张名为emp的表，这里我们可以使用`monetdb\_execute`帮助我们快速实现
-  
+* 在MonetDB中创建一张名为emp的表，这里我们可以使用`monetdb_execute`帮助我们快速实现
+
   ```sql
   SELECT monetdb_execute('foreign_server', $$CREATE TABLE emp(
         name VARCHAR(20),
@@ -61,7 +61,7 @@ make && make install
   )$$);
   ```
 * 创建外部表
-  
+
   ```sql
   CREATE FOREIGN TABLE emp(
         name VARCHAR(20),
@@ -71,12 +71,12 @@ make && make install
   OPTIONS (schema_name 'zm', table_name 'emp');
   ```
 * 完成上述操作之后，便可以在PostgreSQL中查询MonetDB的emp表中数据了
-  
+
   ```sql
   SELECT COUNT(*) FROM emp;
   ```
 * 一种更为快捷的创建外部表的方法是`IMPORT FOREIGN SCHEMA`([https://www.postgresql.org/docs/current/sql-importforeignschema.html](https://www.postgresql.org/docs/current/sql-importforeignschema.html))
-  
+
   ```sql
   DROP FOREIGN TABLE emp;
   IMPORT FOREIGN SCHEMA "zm" limit to (emp) from server foreign_server into public;
@@ -95,6 +95,7 @@ make && make install
 以及相关的RETURNING语句，有趣的是MonetDB的UPDATE ... RETURNING似乎存在[BUG](https://github.com/MonetDB/MonetDB/issues/7623)，所以让我们静待下一个MonetDB版本，请不要在当前系统中使用UPDATE ... RETURNING。
 
 #### 类型
+
 
 | 类型名称                     | 是否支持 | 额外描述                                                                                                            |
 | ---------------------------- | -------- | ------------------------------------------------------------------------------------------------------------------- |
@@ -144,4 +145,3 @@ ALTER FOREIGN TABLE tab ALTER col OPTIONS (ADD key 'true');
 如果您想要运行回归测试，这需要您在MonetDB创建一个名为`TEST`的数据库 `IP：127.0.0.1 PORT：50000`
 
 相关测试内容详见[monetdb\_fdw.sql](./sql/monetdb_fdw.sql)
-
