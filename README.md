@@ -4,7 +4,7 @@
  
 MonetDB_fdw is a PostgreSQL extension based on Foreign Data Wrapper (FDW) technology, which can enhance PostgreSQL analytical capabilities.
 
-The work based on the excellent oracle_fdw (https://github.com/laurenz/oracle_fdw.git) & postgres_fdw (https://git.postgresql.org/git/postgresql.git) projects.
+The work based on the excellent oracle_fdw (https://github.com/laurenz/oracle_fdw.git) & postgres_fdw (https://www.postgresql.org/docs/current/postgres-fdw.html) projects.
 
 ### Supported OS & Database Versions
 * RHEL 8/9, CentOS 8/9
@@ -129,7 +129,7 @@ Test case please reference [type\_support.sql](./sql/type_support.sql)
 
 #### Limits
 
-Primary Key or Unique key is required for DELETE and UPDATE operations.
+Primary Key is required for DELETE and UPDATE operations.
 
 
 #### Regression
