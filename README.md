@@ -9,8 +9,8 @@ The work based on the excellent oracle_fdw (https://github.com/laurenz/oracle_fd
 ### Supported OS & Database Versions
 
 * RHEL 8/9, CentOS 8/9
-* Halo 1.0.16
-* PostgreSQL 16
+* Halo 1.0.14, 1.0.16
+* PostgreSQL 14, 15, 16
 * MonetDB 11.49
 
 ### Cookbook

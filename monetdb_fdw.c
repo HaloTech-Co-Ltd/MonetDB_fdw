@@ -1139,10 +1139,17 @@ MonetDB_GetForeignPlan(PlannerInfo *root,
 	 */
 	if (best_path->fdw_private)
 	{
+#if PG_VERSION_NUM >= 150000
 		has_final_sort = boolVal(list_nth(best_path->fdw_private,
 										  FdwPathPrivateHasFinalSort));
 		has_limit = boolVal(list_nth(best_path->fdw_private,
 									 FdwPathPrivateHasLimit));
+#else
+		has_final_sort = intVal(list_nth(best_path->fdw_private,
+										 FdwPathPrivateHasFinalSort));
+		has_limit = intVal(list_nth(best_path->fdw_private,
+									FdwPathPrivateHasLimit));
+#endif
 	}
 
 	if (IS_SIMPLE_REL(foreignrel))
@@ -1404,12 +1411,21 @@ MonetDB_BeginForeignScan(ForeignScanState *node, int eflags)
 	 * Identify which user to do the remote access as.  This should match what
 	 * ExecCheckPermissions() does.
 	 */
-	userid = OidIsValid(fsplan->checkAsUser) ? fsplan->checkAsUser : GetUserId();
 	if (fsplan->scan.scanrelid > 0)
 		rtindex = fsplan->scan.scanrelid;
 	else
-		rtindex = bms_next_member(fsplan->fs_base_relids, -1);
+#if PG_VERSION_NUM >= 160000
+	rtindex = bms_next_member(fsplan->fs_base_relids, -1);
+#else
+	rtindex = bms_next_member(fsplan->fs_relids, -1);
+#endif
+
 	rte = exec_rt_fetch(rtindex, estate);
+#if PG_VERSION_NUM >= 160000
+	userid = OidIsValid(fsplan->checkAsUser) ? fsplan->checkAsUser : GetUserId();
+#else
+	userid = rte->checkAsUser ? rte->checkAsUser : GetUserId();
+#endif
 
 	/* Get info about foreign table. */
 	table = GetForeignTable(rte->relid);
@@ -1736,11 +1752,19 @@ MonetDB_PlanForeignModify(PlannerInfo *root,
 	 * Build the fdw_private list that will be available to the executor.
 	 * Items in the list must match enum FdwModifyPrivateIndex, above.
 	 */
+#if PG_VERSION_NUM >= 150000
 	return list_make5(makeString(sql.data),
 					  targetAttrs,
 					  makeInteger(values_end_len),
 					  makeBoolean((retrieved_attrs != NIL)),
 					  retrieved_attrs);
+#else
+	return list_make5(makeString(sql.data),
+						targetAttrs,
+						makeInteger(values_end_len),
+						makeInteger((retrieved_attrs != NIL)),
+						retrieved_attrs);
+#endif
 }
 
 /*
@@ -1769,8 +1793,13 @@ MonetDB_BeginForeignModify(ModifyTableState *mtstate,
 									 FdwModifyPrivateTargetAttnums);
 	values_end_len = intVal(list_nth(fdw_private,
 									 FdwModifyPrivateLen));
+#if PG_VERSION_NUM >= 150000	
 	has_returning = boolVal(list_nth(fdw_private,
 									 FdwModifyPrivateHasReturning));
+#else
+	has_returning = intVal(list_nth(fdw_private,
+									 FdwModifyPrivateHasReturning));
+#endif
 	retrieved_attrs = (List *) list_nth(fdw_private,
 										FdwModifyPrivateRetrievedAttrs);
 
@@ -2555,11 +2584,27 @@ estimate_path_cost_size(PlannerInfo *root,
 			}
 
 			/* Get number of grouping columns and possible number of groups */
+#if PG_VERSION_NUM >= 160000
 			numGroupCols = list_length(root->processed_groupClause);
+#else
+			numGroupCols = list_length(root->parse->groupClause);
+#endif
+
+#if PG_VERSION_NUM >= 140000
 			numGroups = estimate_num_groups(root,
+#if PG_VERSION_NUM >= 160000
 											get_sortgrouplist_exprs(root->processed_groupClause,
+#else
+											get_sortgrouplist_exprs(root->parse->groupClause,
+#endif
 																	fpinfo->grouped_tlist),
 											input_rows, NULL, NULL);
+#else
+			numGroups = estimate_num_groups(root,
+											get_sortgrouplist_exprs(root->parse->groupClause,
+																	fpinfo->grouped_tlist),
+											input_rows, NULL);
+#endif
 
 			/*
 			 * Get the retrieved_rows and rows estimates.  If there are HAVING
@@ -2800,7 +2845,11 @@ adjust_foreign_grouping_path_cost(PlannerInfo *root,
 	 * pathkeys, adjust the costs with that function.  Otherwise, adjust the
 	 * costs by applying the same heuristic as for the scan or join case.
 	 */
+#if PG_VERSION_NUM < 160000	
+	if (!grouping_is_sortable(root->parse->groupClause) ||
+#else
 	if (!grouping_is_sortable(root->processed_groupClause) ||
+#endif
 		!pathkeys_contained_in(pathkeys, root->group_pathkeys))
 	{
 		Path		sort_path;	/* dummy for result of cost_sort */
@@ -3608,7 +3657,9 @@ foreign_grouping_ok(PlannerInfo *root, RelOptInfo *grouped_rel,
 									  true,
 									  false,
 									  false,
+#if PG_VERSION_NUM >= 160000
 									  false,
+#endif
 									  root->qual_security_level,
 									  grouped_rel->relids,
 									  NULL,
@@ -3943,7 +3994,11 @@ add_foreign_ordered_paths(PlannerInfo *root, RelOptInfo *input_rel,
 	 * Build the fdw_private list that will be used by MonetDB_GetForeignPlan.
 	 * Items in the list must match order in enum FdwPathPrivateIndex.
 	 */
+#if PG_VERSION_NUM >= 150000
 	fdw_private = list_make2(makeBoolean(true), makeBoolean(false));
+#else
+	fdw_private = list_make2(makeInteger(true), makeInteger(false));
+#endif
 
 	/* Create foreign ordering path */
 	ordered_path = create_foreign_upper_path(root,
@@ -4188,8 +4243,13 @@ add_foreign_final_paths(PlannerInfo *root, RelOptInfo *input_rel,
 	 * Build the fdw_private list that will be used by MonetDB_GetForeignPlan.
 	 * Items in the list must match order in enum FdwPathPrivateIndex.
 	 */
+#if PG_VERSION_NUM >= 150000
 	fdw_private = list_make2(makeBoolean(has_final_sort),
 							 makeBoolean(extra->limit_needed));
+#else
+	fdw_private = list_make2(makeInteger(has_final_sort),
+							 makeInteger(extra->limit_needed));
+#endif
 
 	/*
 	 * Create foreign final path; this gets rid of a no-longer-needed outer
@@ -4620,7 +4680,11 @@ static MonetdbFdwModifyState *create_foreign_modify(EState *estate,
 	fmstate->rel = rel;
 
 	/* Identify which user to do the remote access as. */
+#if PG_VERSION_NUM < 160000
+	userid = rte->checkAsUser ? rte->checkAsUser : GetUserId();
+#else
 	userid = ExecGetResultRelCheckAsUser(resultRelInfo, estate);
+#endif
 
 	/* Get info about foreign table. */
 	table = GetForeignTable(RelationGetRelid(rel));
