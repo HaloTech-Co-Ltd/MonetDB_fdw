@@ -2062,7 +2062,20 @@ static void
 MonetDB_EndForeignInsert(EState *estate,
 						 ResultRelInfo *resultRelInfo)
 {
-	elog(ERROR, "MonetDB_EndForeignInsert not supported yet");
+	MonetdbFdwModifyState *fmstate = (MonetdbFdwModifyState *) resultRelInfo->ri_FdwState;
+
+	Assert(fmstate != NULL);
+
+	/*
+	 * If the fmstate has aux_fmstate set, get the aux_fmstate (see
+	 * MonetDB_BeginForeignInsert())
+	 */
+	if (fmstate->aux_fmstate)
+		fmstate = fmstate->aux_fmstate;
+
+	/* Release remote connection */
+	ReleaseConnection(fmstate->conn);
+	fmstate->conn = NULL;
 }
 
 /*
