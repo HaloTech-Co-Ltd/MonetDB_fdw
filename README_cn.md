@@ -8,9 +8,9 @@ MonetDB\_fdw 是基于 Foreign Data Wrapper （FDW） 技术的 PostgreSQL 扩�
 #### 支持的操作系统和数据库
 
 * RHEL 8/9、CentOS 8/9。
-* 羲和（Halo）数据库 1.0.16
-* PostgreSQL 16版本 （预计将支持14以上的版本）
-* MonetDB 11.49
+* 羲和（Halo）数据库 1.0.14, 1.0.16
+* PostgreSQL 14至16版本 （预计将支持14以上的版本）
+* MonetDB 11.54（master版本）
 
 #### 源码编译安装
 
@@ -55,7 +55,7 @@ make && make install
   ```sql
   CREATE USER MAPPING FOR CURRENT_USER SERVER foreign_server OPTIONS (user 'zm', password 'zm');
   ```
-* 在MonetDB中创建一张名为emp的表，这里我们可以使用`monetdb_execute`帮助我们快速实现
+* 在MonetDB中创建一张名为emp的表，这里我们可以使用`monetdb\_execute`帮助我们快速实现
 
   ```sql
   SELECT monetdb_execute('foreign_server', $$CREATE TABLE emp(
