@@ -3048,6 +3048,8 @@ MonetDB_ImportForeignSchema(ImportForeignSchemaStmt *stmt, Oid serverOid)
 	Mapi 	   	conn;
 	MapiHdl 	hdl;
 	StringInfoData buf;
+	char	   *tablename = NULL,
+			   *temp_tablename = NULL;
 	int			numrows,
 				i;
 	ListCell   *lc;
@@ -3154,13 +3156,14 @@ MonetDB_ImportForeignSchema(ImportForeignSchemaStmt *stmt, Oid serverOid)
 	if ((mapi_fetch_row(hdl)) == 0)
 		die(conn, hdl);
 
+	/* Get first table name */
+	tablename = mapi_fetch_field(hdl, 0);
 	/* note: incrementation of i happens in inner loop's while() test */
 	for (i = 0; i < numrows;)
 	{
-		char	   *tablename = NULL;
 		bool		first_item = true;
+		bool		is_chanage = false;
 
-		tablename = mapi_fetch_field(hdl, 0);
 		resetStringInfo(&buf);
 		appendStringInfo(&buf, "CREATE FOREIGN TABLE %s (\n", quote_identifier(tablename));
 
@@ -3205,9 +3208,16 @@ MonetDB_ImportForeignSchema(ImportForeignSchemaStmt *stmt, Oid serverOid)
 			if (attnotnull[0] == 't')	
 				appendStringInfoString(&buf, " NOT NULL");
 
+			/* Obtain the table name from the data of the next line. */
+			if (mapi_fetch_row(hdl))
+			{
+				temp_tablename = mapi_fetch_field(hdl, 0);
+				if (strcmp(temp_tablename, tablename))
+					is_chanage = true;
+			}
+
 		}
-		while (++i < numrows && (mapi_fetch_row(hdl)) &&
-				strcmp(mapi_fetch_field(hdl, 0), tablename) == 0);
+		while (++i < numrows && (is_chanage == false));
 
 		/*
 		* Add server name and table-level options.  We specify remote
@@ -3223,6 +3233,9 @@ MonetDB_ImportForeignSchema(ImportForeignSchemaStmt *stmt, Oid serverOid)
 		deparseStringLiteral(&buf, tablename);
 		appendStringInfoString(&buf, ");");
 
+		/* If it exists, exchange */
+		if (temp_tablename)
+			tablename = pstrdup(temp_tablename);
 		commands = lappend(commands, pstrdup(buf.data));
 		elog(DEBUG2, "postgres execute query is: \n%s", buf.data);
 	}
