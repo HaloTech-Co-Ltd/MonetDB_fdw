@@ -4894,7 +4894,7 @@ static TupleTableSlot **execute_foreign_modify(EState *estate,
 	if (result == NULL || mapi_error(fmstate->conn))
 		die(fmstate->conn, result);
 
-	n_rows = mapi_get_field_count(result);
+	n_rows = mapi_get_row_count(result);
 	/* Check number of rows affected, and fetch RETURNING tuple if any */
 	if (fmstate->has_returning)
 	{
