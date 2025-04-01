@@ -100,6 +100,7 @@ IMPORT FOREIGN SCHEMA "zm" limit to (emp) from server foreign_server into public
 * DELETE
 * UPDATE
 * SELECT
+* COPY
 * TRUNCATE
 * EXPLAIN
 * IMPORT FOREIGN SCHEMA
@@ -143,9 +144,3 @@ Test case please reference [type\_support.sql](./sql/type_support.sql)
 #### Limits
 
 Primary Key is required for DELETE and UPDATE operations.
-
-#### Regression
-
-A Monet database named TEST is required.
-
-Test case please reference [monetdb\_fdw.sql](./sql/monetdb_fdw.sql)
