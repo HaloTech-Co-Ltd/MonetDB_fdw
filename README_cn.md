@@ -91,6 +91,7 @@ make && make install
 * DELETE
 * UPDATE
 * SELECT
+* COPY
 * TRUNCATE
 * EXPLAIN
 * IMPORT FOREIGN SCHEMA。
@@ -142,9 +143,3 @@ ALTER FOREIGN TABLE tab ALTER col OPTIONS (ADD key 'true');
 ```
 
 更加推荐使用`IMPORT FOREIGN SCHEMA`，因为它在辅助导入外部表会自动标识相关主键字段。
-
-#### 回归测试
-
-如果您想要运行回归测试，这需要您在MonetDB创建一个名为`TEST`的数据库 `IP：127.0.0.1 PORT：50000`
-
-相关测试内容详见[monetdb\_fdw.sql](./sql/monetdb_fdw.sql)
