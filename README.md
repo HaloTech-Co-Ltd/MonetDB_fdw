@@ -24,7 +24,7 @@ export USE_PGXS=1
 export MONETDB_HOME=<MonetDB installation path>
 export PATH=$MONETDB_HOME/bin:$PATH
 export LD_LIBRARY_PATH=$MONETDB_HOME/lib64:$LD_LIBRARY_PATH
-git clone https://github.com/HaloLab001/MonetDB_fdw.git
+git clone https://github.com/HaloTech-Co-Ltd/MonetDB_fdw.git
 cd MonetDB_fdw
 make && make install
 ```
@@ -35,7 +35,7 @@ make && make install
 export MONETDB_HOME=<MonetDB installation path>
 export PATH=$MONETDB_HOME/bin:$PATH
 export LD_LIBRARY_PATH=$MONETDB_HOME/lib64:$LD_LIBRARY_PATH
-git clone https://github.com/HaloLab001/MonetDB_fdw.git <PostgreSQL contrib source path>
+git clone https://github.com/HaloTech-Co-Ltd/MonetDB_fdw.git <PostgreSQL contrib source path>
 cd <PostgreSQL contrib source path>/MonetDB_fdw
 make && make install
 ```
