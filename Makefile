@@ -21,6 +21,9 @@ REGRESS = monetdb_fdw type_support
 ifdef USE_PGXS
 PG_CONFIG = pg_config
 PGXS := $(shell $(PG_CONFIG) --pgxs)
+# Ensure PostgreSQL include path is explicitly set
+PG_CPPFLAGS += -I"$(shell $(PG_CONFIG) --includedir-server)"
+CPPFLAGS += -I"$(shell $(PG_CONFIG) --includedir-server)"
 include $(PGXS)
 else
 subdir = contrib/MonetDB_fdw

@@ -66,6 +66,14 @@ jobs:
         cd ../..
         mv $HOME/monetdb-install monetdb-cache
 
+    - name: Verify PostgreSQL installation
+      run: |
+        pg_config --version
+        pg_config --includedir-server
+        pg_config --pkglibdir
+        ls -la /usr/include/postgresql/16/server/ | head -20
+        test -f /usr/include/postgresql/16/server/postgres.h && echo "postgres.h found" || echo "postgres.h NOT found"
+
     - name: Setup environment variables
       run: |
         echo "MONETDB_HOME=$(pwd)/monetdb-cache" >> $GITHUB_ENV
