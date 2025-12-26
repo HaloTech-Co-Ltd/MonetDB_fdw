@@ -14,24 +14,15 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        pg_version: [14, 15, 16]
+        pg_version: [REL_14_STABLE, REL_15_STABLE, REL_16_STABLE]
 
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
 
-    - name: Install PostgreSQL ${{ matrix.pg_version }}
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y wget gnupg2
-        sudo install -m 0755 -d /etc/apt/keyrings
-        wget --quiet -O - https://www.postgresql.org/media/keys/ACCC4CF8.asc | sudo gpg --dearmor -o /etc/apt/keyrings/postgresql.gpg
-        echo "deb [signed-by=/etc/apt/keyrings/postgresql.gpg] http://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" | sudo tee /etc/apt/sources.list.d/pgdg.list
-        sudo apt-get update
-        sudo apt-get install -y postgresql-${{ matrix.pg_version }} postgresql-server-dev-${{ matrix.pg_version }}
-
     - name: Install build dependencies
       run: |
+        sudo apt-get update
         sudo apt-get install -y \
           build-essential \
           libtool \
@@ -42,7 +33,37 @@ jobs:
           zlib1g-dev \
           flex \
           bison \
-          cmake
+          cmake \
+          libxml2-dev \
+          libxslt-dev \
+          libssl-dev \
+          libxml2-utils \
+          xsltproc \
+          ccache
+
+    - name: Setup ccache
+      uses: hendrikmuhs/ccache-action@v1.2
+      with:
+        key: ubuntu-24.04-${{ matrix.pg_version }}
+
+    - name: Checkout PostgreSQL code
+      run: |
+        rm -rf postgres
+        git clone --branch ${{ matrix.pg_version }} --single-branch --depth 1 https://github.com/postgres/postgres.git
+
+    - name: Cache PostgreSQL build
+      id: cache-pg-build
+      uses: actions/cache@v4
+      with:
+        path: postgres/inst
+        key: pg-build-ubuntu-24.04-${{ matrix.pg_version }}
+
+    - name: Build PostgreSQL
+      if: steps.cache-pg-build.outputs.cache-hit != 'true'
+      working-directory: postgres
+      run: |
+        ./configure --prefix=$PWD/inst --enable-cassert --enable-debug
+        make -j$(nproc) install
 
     - name: Cache MonetDB installation
       id: cache-monetdb
@@ -57,43 +78,39 @@ jobs:
         git clone --depth 1 https://github.com/MonetDB/MonetDB.git
         cd MonetDB
         mkdir build && cd build
-        cmake .. -DCMAKE_INSTALL_PREFIX=$HOME/monetdb-install \
+        cmake .. -DCMAKE_INSTALL_PREFIX=$PWD/../monetdb-install \
                  -DWITH_MAPI=ON \
                  -DWITH_MONITORING=OFF \
                  -DWITH_TESTING=OFF
         make -j$(nproc)
         make install
         cd ../..
-        mv $HOME/monetdb-install monetdb-cache
+        mv MonetDB/monetdb-install monetdb-cache
 
-    - name: Verify PostgreSQL installation
+    - name: Setup environment
       run: |
-        pg_config --version
-        pg_config --includedir-server
-        pg_config --pkglibdir
-        ls -la /usr/include/postgresql/16/server/ | head -20
-        test -f /usr/include/postgresql/16/server/postgres.h && echo "postgres.h found" || echo "postgres.h NOT found"
-
-    - name: Setup environment variables
-      run: |
-        echo "MONETDB_HOME=$(pwd)/monetdb-cache" >> $GITHUB_ENV
-        echo "LD_LIBRARY_PATH=$(pwd)/monetdb-cache/lib:$LD_LIBRARY_PATH" >> $GITHUB_ENV
+        echo "PATH=$PWD/postgres/inst/bin:$PATH" >> $GITHUB_ENV
+        echo "MONETDB_HOME=$PWD/monetdb-cache" >> $GITHUB_ENV
+        echo "LD_LIBRARY_PATH=$PWD/monetdb-cache/lib:$PWD/postgres/inst/lib:$LD_LIBRARY_PATH" >> $GITHUB_ENV
 
     - name: Build MonetDB_fdw
       run: |
-        export USE_PGXS=1
         make clean || true
-        make
+        make -j$(nproc)
 
     - name: Install MonetDB_fdw
       run: |
-        export USE_PGXS=1
-        sudo make install
+        make install
+
+    - name: Start MonetDB server
+      run: |
+        mkdir -p /tmp/monetdb_test
+        $MONETDB_HOME/bin/mserver5 --dbpath=/tmp/monetdb_test --set mapi_port=50000 >/dev/null 2>&1 &
+        sleep 5
 
     - name: Run regression tests
       run: |
-        export USE_PGXS=1
-        sudo make installcheck || {
+        make installcheck || {
           echo "Regression tests failed. Showing diff:"
           cat regression.diffs || true
           exit 1
@@ -104,7 +121,7 @@ jobs:
       if: always()
       uses: actions/upload-artifact@v4
       with:
-        name: test-results-pg${{ matrix.pg_version }}
+        name: test-results-${{ matrix.pg_version }}
         path: |
           regression.diffs
           regression.out
