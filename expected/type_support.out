@@ -457,6 +457,9 @@ CREATE TABLE URL_example(h URL(512));      -- error
 ERROR:  type modifier is not allowed for type "url"
 LINE 1: CREATE TABLE URL_example(h URL(512));
                                    ^
+-- Switch back to monetdb user to delete test_u user
+DROP USER MAPPING FOR CURRENT_USER SERVER foreign_server;
+CREATE USER MAPPING FOR CURRENT_USER SERVER foreign_server OPTIONS (user 'monetdb', password 'monetdb');
 SELECT monetdb_execute('foreign_server', $$ALTER USER test_u SET SCHEMA sys$$);
  monetdb_execute 
 -----------------

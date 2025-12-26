@@ -220,6 +220,10 @@ SELECT monetdb_execute('foreign_server', $$DROP TABLE URL_example$$);
 
 CREATE TABLE URL_example(h URL(512));      -- error
 
+-- Switch back to monetdb user to delete test_u user
+DROP USER MAPPING FOR CURRENT_USER SERVER foreign_server;
+CREATE USER MAPPING FOR CURRENT_USER SERVER foreign_server OPTIONS (user 'monetdb', password 'monetdb');
+
 SELECT monetdb_execute('foreign_server', $$ALTER USER test_u SET SCHEMA sys$$);
 SELECT monetdb_execute('foreign_server', $$DROP SCHEMA test_u$$);
 SELECT monetdb_execute('foreign_server', $$DROP USER test_u$$);

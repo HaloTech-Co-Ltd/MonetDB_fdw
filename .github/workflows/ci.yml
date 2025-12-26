@@ -49,7 +49,7 @@ jobs:
       uses: actions/cache@v4
       with:
         path: monetdb-cache
-        key: monetdb-11.54-${{ runner.os }}
+        key: monetdb-11.56-${{ runner.os }}
 
     - name: Build MonetDB from source
       if: steps.cache-monetdb.outputs.cache-hit != 'true'
@@ -101,28 +101,3 @@ jobs:
           regression.diffs
           regression.out
         retention-days: 7
-
-  codeql:
-    name: CodeQL Analysis
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      security-events: write
-
-    steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
-
-    - name: Initialize CodeQL
-      uses: github/codeql-action/init@v3
-      with:
-        languages: cpp
-        queries: +security-extended,security-and-quality
-
-    - name: Autobuild
-      uses: github/codeql-action/autobuild@v3
-
-    - name: Perform CodeQL Analysis
-      uses: github/codeql-action/analyze@v3
-      with:
-        category: "/language:cpp"

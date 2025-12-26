@@ -11,7 +11,7 @@ OBJS = \
 PGFILEDESC = "MonetDB_fdw - foreign data wrapper for MonetDB"
 
 PG_CPPFLAGS = -I"$(MONETDB_HOME)/include/monetdb/"
-SHLIB_LINK_INTERNAL = -L"$(MONETDB_HOME)/" -L"$(MONETDB_HOME)/lib64/" -lmapi-11.54.0
+SHLIB_LINK_INTERNAL = -L"$(MONETDB_HOME)/lib" -L"$(MONETDB_HOME)/lib64/" -lmapi-11.56.0
 
 EXTENSION = monetdb_fdw
 DATA = monetdb_fdw--1.0.sql
