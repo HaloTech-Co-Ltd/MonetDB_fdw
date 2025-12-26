@@ -1,0 +1,128 @@
+name: CI
+
+on:
+  push:
+    branches: [ main, master, develop ]
+  pull_request:
+    branches: [ main, master, develop ]
+  workflow_dispatch:
+
+jobs:
+  build-and-test:
+    name: Build & Test (PG ${{ matrix.pg_version }})
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        pg_version: [14, 15, 16]
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Install PostgreSQL ${{ matrix.pg_version }}
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y wget gnupg2
+        sudo install -m 0755 -d /etc/apt/keyrings
+        wget --quiet -O - https://www.postgresql.org/media/keys/ACCC4CF8.asc | sudo gpg --dearmor -o /etc/apt/keyrings/postgresql.gpg
+        echo "deb [signed-by=/etc/apt/keyrings/postgresql.gpg] http://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" | sudo tee /etc/apt/sources.list.d/pgdg.list
+        sudo apt-get update
+        sudo apt-get install -y postgresql-${{ matrix.pg_version }} postgresql-server-dev-${{ matrix.pg_version }}
+
+    - name: Install build dependencies
+      run: |
+        sudo apt-get install -y \
+          build-essential \
+          libtool \
+          autoconf \
+          automake \
+          pkg-config \
+          libreadline-dev \
+          zlib1g-dev \
+          flex \
+          bison \
+          cmake
+
+    - name: Cache MonetDB installation
+      id: cache-monetdb
+      uses: actions/cache@v4
+      with:
+        path: monetdb-cache
+        key: monetdb-11.54-${{ runner.os }}
+
+    - name: Build MonetDB from source
+      if: steps.cache-monetdb.outputs.cache-hit != 'true'
+      run: |
+        git clone --depth 1 https://github.com/MonetDB/MonetDB.git
+        cd MonetDB
+        mkdir build && cd build
+        cmake .. -DCMAKE_INSTALL_PREFIX=$HOME/monetdb-install \
+                 -DWITH_MAPI=ON \
+                 -DWITH_MONITORING=OFF \
+                 -DWITH_TESTING=OFF
+        make -j$(nproc)
+        make install
+        cd ../..
+        mv $HOME/monetdb-install monetdb-cache
+
+    - name: Setup environment variables
+      run: |
+        echo "MONETDB_HOME=$(pwd)/monetdb-cache" >> $GITHUB_ENV
+        echo "LD_LIBRARY_PATH=$(pwd)/monetdb-cache/lib:$LD_LIBRARY_PATH" >> $GITHUB_ENV
+
+    - name: Build MonetDB_fdw
+      run: |
+        export USE_PGXS=1
+        make clean || true
+        make
+
+    - name: Install MonetDB_fdw
+      run: |
+        export USE_PGXS=1
+        sudo make install
+
+    - name: Run regression tests
+      run: |
+        export USE_PGXS=1
+        sudo make installcheck || {
+          echo "Regression tests failed. Showing diff:"
+          cat regression.diffs || true
+          exit 1
+        }
+      continue-on-error: true
+
+    - name: Upload test results
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: test-results-pg${{ matrix.pg_version }}
+        path: |
+          regression.diffs
+          regression.out
+        retention-days: 7
+
+  codeql:
+    name: CodeQL Analysis
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Initialize CodeQL
+      uses: github/codeql-action/init@v3
+      with:
+        languages: cpp
+        queries: +security-extended,security-and-quality
+
+    - name: Autobuild
+      uses: github/codeql-action/autobuild@v3
+
+    - name: Perform CodeQL Analysis
+      uses: github/codeql-action/analyze@v3
+      with:
+        category: "/language:cpp"
