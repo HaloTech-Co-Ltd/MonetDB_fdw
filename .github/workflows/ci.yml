@@ -70,13 +70,15 @@ jobs:
       uses: actions/cache@v4
       with:
         path: monetdb-cache
-        key: monetdb-11.56-${{ runner.os }}
+        key: monetdb-${{ runner.os }}-v2
 
     - name: Build MonetDB from source
       if: steps.cache-monetdb.outputs.cache-hit != 'true'
       run: |
         git clone --depth 1 https://github.com/MonetDB/MonetDB.git
         cd MonetDB
+        MONETDB_SHA=$(git rev-parse HEAD)
+        echo "MonetDB commit: $MONETDB_SHA"
         mkdir build && cd build
         cmake .. -DCMAKE_INSTALL_PREFIX=$PWD/../monetdb-install \
                  -DWITH_MAPI=ON \
@@ -89,24 +91,61 @@ jobs:
 
     - name: Setup environment
       run: |
-        echo "PATH=$PWD/postgres/inst/bin:$PATH" >> $GITHUB_ENV
+        echo "PATH=$PWD/postgres/inst/bin:$PWD/monetdb-cache/bin:$PATH" >> $GITHUB_ENV
+        echo "PG_CONFIG=$PWD/postgres/inst/bin/pg_config" >> $GITHUB_ENV
         echo "MONETDB_HOME=$PWD/monetdb-cache" >> $GITHUB_ENV
         echo "LD_LIBRARY_PATH=$PWD/monetdb-cache/lib:$PWD/postgres/inst/lib:$LD_LIBRARY_PATH" >> $GITHUB_ENV
 
+    - name: Verify MonetDB installation
+      run: |
+        echo "Checking MonetDB installation..."
+        ls -la $MONETDB_HOME/bin/
+        ls -la $MONETDB_HOME/lib/
+        find $MONETDB_HOME/lib -name "libmapi*"
+
     - name: Build MonetDB_fdw
+      env:
+        USE_PGXS: 1
       run: |
         make clean || true
         make -j$(nproc)
 
     - name: Install MonetDB_fdw
+      env:
+        USE_PGXS: 1
       run: |
         make install
 
     - name: Start MonetDB server
       run: |
-        mkdir -p /tmp/monetdb_test
-        $MONETDB_HOME/bin/mserver5 --dbpath=/tmp/monetdb_test --set mapi_port=50000 >/dev/null 2>&1 &
-        sleep 5
+        rm -rf /tmp/test
+        mkdir -p /tmp/test
+        # Start MonetDB server in background
+        # Database name is derived from dbpath directory name (test)
+        $MONETDB_HOME/bin/mserver5 --dbpath=/tmp/test --set mapi_port=50000 >/tmp/monetdb.log 2>&1 &
+        SERVER_PID=$!
+        echo "SERVER_PID=$SERVER_PID" >> $GITHUB_ENV
+        # Wait for server to start with timeout
+        for i in {1..30}; do
+          if grep -q "ready for connections" /tmp/monetdb.log 2>/dev/null; then
+            echo "MonetDB server started successfully"
+            break
+          fi
+          if [ $i -eq 30 ]; then
+            echo "Timeout waiting for MonetDB server to start"
+            cat /tmp/monetdb.log
+            exit 1
+          fi
+          sleep 1
+        done
+        # Verify server is running
+        cat /tmp/monetdb.log
+        # mclient test connection (monetdb default user, password via stdin)
+        echo "monetdb" | timeout 5 $MONETDB_HOME/bin/mclient -h 127.0.0.1 -p 50000 -u monetdb -s "SELECT 1;" || {
+          echo "MonetDB server connection test failed"
+          cat /tmp/monetdb.log
+          exit 1
+        }
 
     - name: Run regression tests
       run: |
@@ -116,6 +155,15 @@ jobs:
           exit 1
         }
       continue-on-error: true
+
+    - name: Cleanup MonetDB server
+      if: always()
+      run: |
+        if [ -n "$SERVER_PID" ]; then
+          kill $SERVER_PID 2>/dev/null || true
+          wait $SERVER_PID 2>/dev/null || true
+        fi
+        rm -rf /tmp/test
 
     - name: Upload test results
       if: always()

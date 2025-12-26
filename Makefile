@@ -19,7 +19,7 @@ DATA = monetdb_fdw--1.0.sql
 REGRESS = monetdb_fdw type_support
 
 ifdef USE_PGXS
-PG_CONFIG = pg_config
+PG_CONFIG ?= pg_config
 PGXS := $(shell $(PG_CONFIG) --pgxs)
 include $(PGXS)
 else
