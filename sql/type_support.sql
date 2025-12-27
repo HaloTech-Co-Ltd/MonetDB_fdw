@@ -1,14 +1,17 @@
+-- Set timezone to UTC for consistent test results
+SET timezone = 'UTC';
+
 select monetdb_execute('foreign_server', $$CREATE TABLE Numeric_Types(
 	a TINYINT,
 	b SMALLINT,
 	c INTEGER,
 	d BIGINT,
-	-- e HUGEINT, 
+	-- e HUGEINT,
 	f DECIMAL,
 	g NUMERIC(38, 3),
 	h REAL,
 	i DOUBLE PRECISION,
-	j FLOAT 
+	j FLOAT
 )$$);
 
 IMPORT FOREIGN SCHEMA "test_u" limit to (Numeric_Types) from server foreign_server into public; 
@@ -123,11 +126,21 @@ select monetdb_execute('foreign_server', $$CREATE TABLE Time_Types(
 	e TIME WITH TIME ZONE
 )$$);
 
-IMPORT FOREIGN SCHEMA "test_u" limit to (Time_Types) from server foreign_server into public; 
+IMPORT FOREIGN SCHEMA "test_u" limit to (Time_Types) from server foreign_server into public;
 \d+ Time_Types
 
+-- Test data insertion
 INSERT INTO time_types VALUES('2014-04-24 17:12:12.415', '2014-04-24 17:12:12.415 -02:00', '2014-04-24', '17:12:12.415', '17:12:12.415 -02:00');
-SELECT * FROM time_types;
+
+-- Verify timestamp types (convert to text for consistent display)
+SELECT a::text AS timestamp_without_tz,
+       b AT TIME ZONE 'UTC' AS timestamp_with_tz_utc,
+       c::text AS date
+FROM time_types;
+
+-- Verify time types separately
+SELECT d::text AS time_without_tz FROM time_types;
+SELECT e AT TIME ZONE 'UTC' AS time_with_tz_utc FROM time_types;
 DROP FOREIGN TABLE Time_Types;
 SELECT monetdb_execute('foreign_server', $$DROP TABLE Time_Types$$);
 
@@ -219,6 +232,10 @@ DROP FOREIGN TABLE URL_example;
 SELECT monetdb_execute('foreign_server', $$DROP TABLE URL_example$$);
 
 CREATE TABLE URL_example(h URL(512));      -- error
+
+-- Switch back to monetdb user to delete test_u user
+DROP USER MAPPING FOR CURRENT_USER SERVER foreign_server;
+CREATE USER MAPPING FOR CURRENT_USER SERVER foreign_server OPTIONS (user 'monetdb', password 'monetdb');
 
 SELECT monetdb_execute('foreign_server', $$ALTER USER test_u SET SCHEMA sys$$);
 SELECT monetdb_execute('foreign_server', $$DROP SCHEMA test_u$$);

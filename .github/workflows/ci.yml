@@ -14,24 +14,15 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        pg_version: [14, 15, 16]
+        pg_version: [REL_14_STABLE, REL_15_STABLE, REL_16_STABLE]
 
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
 
-    - name: Install PostgreSQL ${{ matrix.pg_version }}
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y wget gnupg2
-        sudo install -m 0755 -d /etc/apt/keyrings
-        wget --quiet -O - https://www.postgresql.org/media/keys/ACCC4CF8.asc | sudo gpg --dearmor -o /etc/apt/keyrings/postgresql.gpg
-        echo "deb [signed-by=/etc/apt/keyrings/postgresql.gpg] http://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" | sudo tee /etc/apt/sources.list.d/pgdg.list
-        sudo apt-get update
-        sudo apt-get install -y postgresql-${{ matrix.pg_version }} postgresql-server-dev-${{ matrix.pg_version }}
-
     - name: Install build dependencies
       run: |
+        sudo apt-get update
         sudo apt-get install -y \
           build-essential \
           libtool \
@@ -42,87 +33,168 @@ jobs:
           zlib1g-dev \
           flex \
           bison \
-          cmake
+          cmake \
+          libxml2-dev \
+          libxslt-dev \
+          libssl-dev \
+          libxml2-utils \
+          xsltproc \
+          ccache
+
+    - name: Setup ccache
+      uses: hendrikmuhs/ccache-action@v1.2
+      with:
+        key: ubuntu-24.04-${{ matrix.pg_version }}
+
+    - name: Checkout PostgreSQL code
+      run: |
+        rm -rf postgres
+        git clone --branch ${{ matrix.pg_version }} --single-branch --depth 1 https://github.com/postgres/postgres.git
+
+    - name: Cache PostgreSQL build
+      id: cache-pg-build
+      uses: actions/cache@v4
+      with:
+        path: postgres/inst
+        key: pg-build-ubuntu-24.04-${{ matrix.pg_version }}
+
+    - name: Build PostgreSQL
+      if: steps.cache-pg-build.outputs.cache-hit != 'true'
+      working-directory: postgres
+      run: |
+        ./configure --prefix=$PWD/inst --enable-cassert --enable-debug
+        make -j$(nproc) install
 
     - name: Cache MonetDB installation
       id: cache-monetdb
       uses: actions/cache@v4
       with:
         path: monetdb-cache
-        key: monetdb-11.54-${{ runner.os }}
+        key: monetdb-${{ runner.os }}-v2
 
     - name: Build MonetDB from source
       if: steps.cache-monetdb.outputs.cache-hit != 'true'
       run: |
         git clone --depth 1 https://github.com/MonetDB/MonetDB.git
         cd MonetDB
+        MONETDB_SHA=$(git rev-parse HEAD)
+        echo "MonetDB commit: $MONETDB_SHA"
         mkdir build && cd build
-        cmake .. -DCMAKE_INSTALL_PREFIX=$HOME/monetdb-install \
+        cmake .. -DCMAKE_INSTALL_PREFIX=$PWD/../monetdb-install \
                  -DWITH_MAPI=ON \
                  -DWITH_MONITORING=OFF \
                  -DWITH_TESTING=OFF
         make -j$(nproc)
         make install
         cd ../..
-        mv $HOME/monetdb-install monetdb-cache
+        mv MonetDB/monetdb-install monetdb-cache
 
-    - name: Setup environment variables
+    - name: Setup environment
       run: |
-        echo "MONETDB_HOME=$(pwd)/monetdb-cache" >> $GITHUB_ENV
-        echo "LD_LIBRARY_PATH=$(pwd)/monetdb-cache/lib:$LD_LIBRARY_PATH" >> $GITHUB_ENV
+        echo "PATH=$PWD/postgres/inst/bin:$PWD/monetdb-cache/bin:$PATH" >> $GITHUB_ENV
+        echo "PG_CONFIG=$PWD/postgres/inst/bin/pg_config" >> $GITHUB_ENV
+        echo "MONETDB_HOME=$PWD/monetdb-cache" >> $GITHUB_ENV
+        echo "LD_LIBRARY_PATH=$PWD/monetdb-cache/lib:$PWD/postgres/inst/lib:$LD_LIBRARY_PATH" >> $GITHUB_ENV
+
+    - name: Verify MonetDB installation
+      run: |
+        echo "Checking MonetDB installation..."
+        ls -la $MONETDB_HOME/bin/
+        ls -la $MONETDB_HOME/lib/
+        find $MONETDB_HOME/lib -name "libmapi*"
 
     - name: Build MonetDB_fdw
+      env:
+        USE_PGXS: 1
       run: |
-        export USE_PGXS=1
         make clean || true
-        make
+        make -j$(nproc)
 
     - name: Install MonetDB_fdw
+      env:
+        USE_PGXS: 1
       run: |
-        export USE_PGXS=1
-        sudo make install
+        make install
+
+    - name: Start MonetDB server
+      run: |
+        rm -rf /tmp/test
+        mkdir -p /tmp/test
+        # Start MonetDB server in background
+        # Database name is derived from dbpath directory name (test)
+        $MONETDB_HOME/bin/mserver5 --dbpath=/tmp/test --set mapi_port=50000 >/tmp/monetdb.log 2>&1 &
+        SERVER_PID=$!
+        echo "SERVER_PID=$SERVER_PID" >> $GITHUB_ENV
+        # Wait for server to start with timeout
+        for i in {1..30}; do
+          if grep -q "Listening for connection requests" /tmp/monetdb.log 2>/dev/null; then
+            echo "MonetDB server started successfully"
+            break
+          fi
+          if [ $i -eq 30 ]; then
+            echo "Timeout waiting for MonetDB server to start"
+            cat /tmp/monetdb.log
+            exit 1
+          fi
+          sleep 1
+        done
+        # Verify server is running
+        cat /tmp/monetdb.log
+        # mclient test connection (monetdb default user, password via stdin)
+        echo "monetdb" | timeout 5 $MONETDB_HOME/bin/mclient -h 127.0.0.1 -p 50000 -u monetdb -s "SELECT 1;" || {
+          echo "MonetDB server connection test failed"
+          cat /tmp/monetdb.log
+          exit 1
+        }
+
+    - name: Start PostgreSQL server
+      run: |
+        rm -rf /tmp/pgdata
+        mkdir -p /tmp/pgdata
+        $PWD/postgres/inst/bin/initdb -D /tmp/pgdata --no-locale --encoding=UTF8
+        $PWD/postgres/inst/bin/pg_ctl -D /tmp/pgdata -l /tmp/pg.log start
+        # Wait for PostgreSQL to be ready
+        for i in {1..30}; do
+          if $PWD/postgres/inst/bin/pg_isready -q; then
+            echo "PostgreSQL server started successfully"
+            break
+          fi
+          if [ $i -eq 30 ]; then
+            echo "Timeout waiting for PostgreSQL server to start"
+            cat /tmp/pg.log
+            exit 1
+          fi
+          sleep 1
+        done
 
     - name: Run regression tests
+      env:
+        USE_PGXS: 1
       run: |
-        export USE_PGXS=1
-        sudo make installcheck || {
+        make installcheck || {
           echo "Regression tests failed. Showing diff:"
           cat regression.diffs || true
           exit 1
         }
-      continue-on-error: true
+
+    - name: Cleanup MonetDB server
+      if: always()
+      run: |
+        if [ -n "$SERVER_PID" ]; then
+          kill $SERVER_PID 2>/dev/null || true
+          wait $SERVER_PID 2>/dev/null || true
+        fi
+        rm -rf /tmp/test
+        # Stop PostgreSQL server
+        $PWD/postgres/inst/bin/pg_ctl -D /tmp/pgdata stop -m fast || true
+        rm -rf /tmp/pgdata
 
     - name: Upload test results
       if: always()
       uses: actions/upload-artifact@v4
       with:
-        name: test-results-pg${{ matrix.pg_version }}
+        name: test-results-${{ matrix.pg_version }}
         path: |
           regression.diffs
           regression.out
         retention-days: 7
-
-  codeql:
-    name: CodeQL Analysis
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      security-events: write
-
-    steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
-
-    - name: Initialize CodeQL
-      uses: github/codeql-action/init@v3
-      with:
-        languages: cpp
-        queries: +security-extended,security-and-quality
-
-    - name: Autobuild
-      uses: github/codeql-action/autobuild@v3
-
-    - name: Perform CodeQL Analysis
-      uses: github/codeql-action/analyze@v3
-      with:
-        category: "/language:cpp"
