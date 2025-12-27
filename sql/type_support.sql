@@ -1,14 +1,17 @@
+-- Set timezone to UTC for consistent test results
+SET timezone = 'UTC';
+
 select monetdb_execute('foreign_server', $$CREATE TABLE Numeric_Types(
 	a TINYINT,
 	b SMALLINT,
 	c INTEGER,
 	d BIGINT,
-	-- e HUGEINT, 
+	-- e HUGEINT,
 	f DECIMAL,
 	g NUMERIC(38, 3),
 	h REAL,
 	i DOUBLE PRECISION,
-	j FLOAT 
+	j FLOAT
 )$$);
 
 IMPORT FOREIGN SCHEMA "test_u" limit to (Numeric_Types) from server foreign_server into public; 

@@ -1,5 +1,7 @@
 -- !!! If you want to run regression tests, you need to create a database named "test" in MonetDB with the default port 50000.
 
+SET timezone = 'UTC';
+
 CREATE EXTENSION monetdb_fdw;
 
 CREATE SERVER foreign_server FOREIGN DATA WRAPPER monetdb_fdw
@@ -25,7 +27,12 @@ CREATE FOREIGN TABLE emp(
 SERVER foreign_server
 OPTIONS (schema_name 'test_u', table_name 'emp');
 
-\des
+SELECT s.srvname AS "Name",
+  f.fdwname AS "Foreign-data wrapper"
+FROM pg_catalog.pg_foreign_server s
+     JOIN pg_catalog.pg_foreign_data_wrapper f ON f.oid=s.srvfdw
+ORDER BY 1;
+
 \d+ emp
 
 -- test insert 
@@ -100,7 +107,18 @@ DROP FOREIGN TABLE delete_emp;
 SELECT monetdb_execute('foreign_server', $$CREATE TABLE test_default(name VARCHAR(20) default 'zm', age INTEGER)$$);
 -- test IMPORT FOREIGN SCHEMA
 IMPORT FOREIGN SCHEMA "test_u" from server foreign_server into public;
-\dE
+
+SELECT n.nspname as "Schema",
+  c.relname as "Name",
+  CASE c.relkind WHEN 'r' THEN 'table' WHEN 'v' THEN 'view' WHEN 'm' THEN 'materialized view' WHEN 'i' THEN 'index' WHEN 'S' THEN 'sequence' WHEN 't' THEN 'TOAST table' WHEN 'f' THEN 'foreign table' WHEN 'p' THEN 'partitioned table' WHEN 'I' THEN 'partitioned index' END as "Type"
+FROM pg_catalog.pg_class c
+     LEFT JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+WHERE c.relkind IN ('f','')
+      AND n.nspname <> 'pg_catalog'
+      AND n.nspname !~ '^pg_toast'
+      AND n.nspname <> 'information_schema'
+  AND pg_catalog.pg_table_is_visible(c.oid)
+ORDER BY 1,2;
 SELECT * FROM emp;
 SELECT * FROM delete_emp;
 EXPLAIN VERBOSE INSERT INTO test_default(age) values(22);
@@ -124,7 +142,23 @@ SELECT monetdb_execute('foreign_server', $$CREATE TABLE orders (
 )$$);
 
 IMPORT FOREIGN SCHEMA "test_u" limit to (orders) from server foreign_server into public;
-\dE+ orders
+
+SELECT n.nspname as "Schema",
+  c.relname as "Name",
+  CASE c.relkind WHEN 'r' THEN 'table' WHEN 'v' THEN 'view' WHEN 'm' THEN 'materialized view' WHEN 'i' THEN 'index' WHEN 'S' THEN 'sequence' WHEN 't' THEN 'TOAST table' WHEN 'f' THEN 'foreign table' WHEN 'p' THEN 'partitioned table' WHEN 'I' THEN 'partitioned index' END as "Type",
+  '' as "Owner",
+  CASE c.relpersistence WHEN 'p' THEN 'permanent' WHEN 't' THEN 'temporary' WHEN 'u' THEN 'unlogged' END as "Persistence",
+  pg_catalog.pg_size_pretty(pg_catalog.pg_table_size(c.oid)) as "Size",
+  pg_catalog.obj_description(c.oid, 'pg_class') as "Description"
+FROM pg_catalog.pg_class c
+     LEFT JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+WHERE c.relkind IN ('f','')
+      AND n.nspname <> 'pg_catalog'
+      AND n.nspname !~ '^pg_toast'
+      AND n.nspname <> 'information_schema'
+  AND pg_catalog.pg_table_is_visible(c.oid)
+ORDER BY 1,2;
+
 \d+ orders
 
 INSERT INTO orders (order_id, product_id, customer_email, order_date, quantity)
