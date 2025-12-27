@@ -250,7 +250,7 @@ select monetdb_execute('foreign_server', $$CREATE TABLE Time_Types(
  
 (1 row)
 
-IMPORT FOREIGN SCHEMA "test_u" limit to (Time_Types) from server foreign_server into public; 
+IMPORT FOREIGN SCHEMA "test_u" limit to (Time_Types) from server foreign_server into public;
 \d+ Time_Types
                                              Foreign table "public.time_types"
  Column |            Type             | Collation | Nullable | Default | FDW options | Storage | Stats target | Description 
@@ -263,11 +263,29 @@ IMPORT FOREIGN SCHEMA "test_u" limit to (Time_Types) from server foreign_server 
 Server: foreign_server
 FDW options: (schema_name 'test_u', table_name 'time_types')
 
+-- Test data insertion
 INSERT INTO time_types VALUES('2014-04-24 17:12:12.415', '2014-04-24 17:12:12.415 -02:00', '2014-04-24', '17:12:12.415', '17:12:12.415 -02:00');
-SELECT * FROM time_types;
-              a               |                b                 |     c      |    d     |      e      
-------------------------------+----------------------------------+------------+----------+-------------
- Thu Apr 24 17:12:12.415 2014 | Thu Apr 24 19:12:12.415 2014 UTC | 04-24-2014 | 17:12:12 | 03:12:12+08
+-- Verify timestamp types (convert to text for consistent display)
+SELECT a::text AS timestamp_without_tz,
+       b AT TIME ZONE 'UTC' AS timestamp_with_tz_utc,
+       c::text AS date
+FROM time_types;
+     timestamp_without_tz     |    timestamp_with_tz_utc     |    date    
+------------------------------+------------------------------+------------
+ Thu Apr 24 17:12:12.415 2014 | Thu Apr 24 19:12:12.415 2014 | 04-24-2014
+(1 row)
+
+-- Verify time types separately
+SELECT d::text AS time_without_tz FROM time_types;
+ time_without_tz 
+-----------------
+ 17:12:12
+(1 row)
+
+SELECT e AT TIME ZONE 'UTC' AS time_with_tz_utc FROM time_types;
+ time_with_tz_utc 
+------------------
+ 19:12:12+00
 (1 row)
 
 DROP FOREIGN TABLE Time_Types;

@@ -126,11 +126,21 @@ select monetdb_execute('foreign_server', $$CREATE TABLE Time_Types(
 	e TIME WITH TIME ZONE
 )$$);
 
-IMPORT FOREIGN SCHEMA "test_u" limit to (Time_Types) from server foreign_server into public; 
+IMPORT FOREIGN SCHEMA "test_u" limit to (Time_Types) from server foreign_server into public;
 \d+ Time_Types
 
+-- Test data insertion
 INSERT INTO time_types VALUES('2014-04-24 17:12:12.415', '2014-04-24 17:12:12.415 -02:00', '2014-04-24', '17:12:12.415', '17:12:12.415 -02:00');
-SELECT * FROM time_types;
+
+-- Verify timestamp types (convert to text for consistent display)
+SELECT a::text AS timestamp_without_tz,
+       b AT TIME ZONE 'UTC' AS timestamp_with_tz_utc,
+       c::text AS date
+FROM time_types;
+
+-- Verify time types separately
+SELECT d::text AS time_without_tz FROM time_types;
+SELECT e AT TIME ZONE 'UTC' AS time_with_tz_utc FROM time_types;
 DROP FOREIGN TABLE Time_Types;
 SELECT monetdb_execute('foreign_server', $$DROP TABLE Time_Types$$);
 
