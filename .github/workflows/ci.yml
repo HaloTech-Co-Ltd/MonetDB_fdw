@@ -147,6 +147,26 @@ jobs:
           exit 1
         }
 
+    - name: Start PostgreSQL server
+      run: |
+        rm -rf /tmp/pgdata
+        mkdir -p /tmp/pgdata
+        $PWD/postgres/inst/bin/initdb -D /tmp/pgdata --no-locale --encoding=UTF8
+        $PWD/postgres/inst/bin/pg_ctl -D /tmp/pgdata -l /tmp/pg.log start
+        # Wait for PostgreSQL to be ready
+        for i in {1..30}; do
+          if $PWD/postgres/inst/bin/pg_isready -q; then
+            echo "PostgreSQL server started successfully"
+            break
+          fi
+          if [ $i -eq 30 ]; then
+            echo "Timeout waiting for PostgreSQL server to start"
+            cat /tmp/pg.log
+            exit 1
+          fi
+          sleep 1
+        done
+
     - name: Run regression tests
       env:
         USE_PGXS: 1
@@ -166,6 +186,9 @@ jobs:
           wait $SERVER_PID 2>/dev/null || true
         fi
         rm -rf /tmp/test
+        # Stop PostgreSQL server
+        $PWD/postgres/inst/bin/pg_ctl -D /tmp/pgdata stop -m fast || true
+        rm -rf /tmp/pgdata
 
     - name: Upload test results
       if: always()
