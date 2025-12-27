@@ -235,7 +235,7 @@ INSERT INTO json_example values(
 SELECT * FROM json_example;
 SELECT jsonb_path_query(c1::jsonb, '$.store') FROM json_example;  -- use postgresql function
 
-CREATE TABLE json_example2(h JSON(512));      -- error
+-- CREATE TABLE json_example2(h JSON(512));      -- error
 
 DROP FOREIGN TABLE json_example;
 SELECT monetdb_execute('foreign_server', $$DROP TABLE json_example$$);

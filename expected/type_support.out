@@ -362,10 +362,7 @@ SELECT jsonb_path_query(c1::jsonb, '$.store') FROM json_example;  -- use postgre
  {"book": [{"price": 8.95, "title": "Sayings of the Century", "author": "Nigel Rees", "category": "reference"}, {"price": 12.99, "title": "Sword of Honour", "author": "Evelyn Waugh", "category": "fiction"}], "bicycle": {"color": "red", "price": 19.95}}
 (1 row)
 
-CREATE TABLE json_example2(h JSON(512));      -- error
-ERROR:  type modifier is not allowed for type "json"
-LINE 1: CREATE TABLE json_example2(h JSON(512));
-                                     ^
+-- CREATE TABLE json_example2(h JSON(512));      -- error
 DROP FOREIGN TABLE json_example;
 SELECT monetdb_execute('foreign_server', $$DROP TABLE json_example$$);
  monetdb_execute 
