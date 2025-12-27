@@ -148,6 +148,8 @@ jobs:
         }
 
     - name: Run regression tests
+      env:
+        USE_PGXS: 1
       run: |
         make installcheck || {
           echo "Regression tests failed. Showing diff:"
