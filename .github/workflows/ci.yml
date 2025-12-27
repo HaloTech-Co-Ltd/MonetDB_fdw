@@ -127,7 +127,7 @@ jobs:
         echo "SERVER_PID=$SERVER_PID" >> $GITHUB_ENV
         # Wait for server to start with timeout
         for i in {1..30}; do
-          if grep -q "ready for connections" /tmp/monetdb.log 2>/dev/null; then
+          if grep -q "Listening for connection requests" /tmp/monetdb.log 2>/dev/null; then
             echo "MonetDB server started successfully"
             break
           fi
