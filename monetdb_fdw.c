@@ -59,6 +59,9 @@
 #include "utils/syscache.h"
 #include "utils/ruleutils.h"
 
+/* Forward declaration for ExplainState - defined in commands/explain_state.h */
+typedef struct ExplainState ExplainState;
+
 PG_MODULE_MAGIC;
 
 /* Default CPU cost to start up a foreign query. */
@@ -927,11 +930,17 @@ MonetDB_GetForeignPaths(PlannerInfo *root,
 	path = create_foreignscan_path(root, baserel,
 								   NULL,	/* default pathtarget */
 								   fpinfo->rows,
+#if PG_VERSION_NUM >= 170000
+								   0,	/* disabled_nodes */
+#endif
 								   fpinfo->startup_cost,
 								   fpinfo->total_cost,
 								   NIL, /* no pathkeys */
 								   baserel->lateral_relids,
 								   NULL,	/* no extra plan */
+#if PG_VERSION_NUM >= 170000
+								   NIL,	/* no fdw_restrictinfo list */
+#endif
 								   NIL);	/* no fdw_private list */
 	add_path(baserel, (Path *) path);
 
@@ -1099,11 +1108,17 @@ MonetDB_GetForeignPaths(PlannerInfo *root,
 		path = create_foreignscan_path(root, baserel,
 									   NULL,	/* default pathtarget */
 									   rows,
+#if PG_VERSION_NUM >= 170000
+									   0,	/* disabled_nodes */
+#endif
 									   startup_cost,
 									   total_cost,
 									   NIL, /* no pathkeys */
 									   param_info->ppi_req_outer,
 									   NULL,
+#if PG_VERSION_NUM >= 170000
+									   NIL,	/* no fdw_restrictinfo list */
+#endif
 									   NIL);	/* no fdw_private list */
 		add_path(baserel, (Path *) path);
 	}
@@ -2869,6 +2884,18 @@ adjust_foreign_grouping_path_cost(PlannerInfo *root,
 	{
 		Path		sort_path;	/* dummy for result of cost_sort */
 
+#if PG_VERSION_NUM >= 180000
+		cost_sort(&sort_path,
+				  root,
+				  pathkeys,
+				  0,	/* input_disabled_nodes */
+				  *p_startup_cost + *p_run_cost,
+				  retrieved_rows,
+				  width,
+				  0.0,
+				  work_mem,
+				  limit_tuples);
+#else
 		cost_sort(&sort_path,
 				  root,
 				  pathkeys,
@@ -2878,6 +2905,7 @@ adjust_foreign_grouping_path_cost(PlannerInfo *root,
 				  0.0,
 				  work_mem,
 				  limit_tuples);
+#endif
 
 		*p_startup_cost = sort_path.startup_cost;
 		*p_run_cost = sort_path.total_cost - sort_path.startup_cost;
@@ -3398,22 +3426,34 @@ add_paths_with_pathkeys_for_rel(PlannerInfo *root, RelOptInfo *rel,
 					 create_foreignscan_path(root, rel,
 											 NULL,
 											 rows,
+#if PG_VERSION_NUM >= 170000
+											 0,	/* disabled_nodes */
+#endif
 											 startup_cost,
 											 total_cost,
 											 useful_pathkeys,
 											 rel->lateral_relids,
 											 sorted_epq_path,
+#if PG_VERSION_NUM >= 170000
+											 NIL,	/* no fdw_restrictinfo list */
+#endif
 											 NIL));
 		else
 			add_path(rel, (Path *)
 					 create_foreign_join_path(root, rel,
 											  NULL,
 											  rows,
+#if PG_VERSION_NUM >= 170000
+											  0,	/* disabled_nodes */
+#endif
 											  startup_cost,
 											  total_cost,
 											  useful_pathkeys,
 											  rel->lateral_relids,
 											  sorted_epq_path,
+#if PG_VERSION_NUM >= 170000
+											  NIL,	/* no fdw_restrictinfo list */
+#endif
 											  NIL));
 	}
 }
@@ -3629,11 +3669,17 @@ MonetDB_GetForeignJoinPaths(PlannerInfo *root,
 										joinrel,
 										NULL,	/* default pathtarget */
 										rows,
+#if PG_VERSION_NUM >= 170000
+										0,	/* disabled_nodes */
+#endif
 										startup_cost,
 										total_cost,
 										NIL,	/* no pathkeys */
 										joinrel->lateral_relids,
 										epq_path,
+#if PG_VERSION_NUM >= 170000
+										NIL,	/* no fdw_restrictinfo list */
+#endif
 										NIL);	/* no fdw_private */
 
 	/* Add generated path into joinrel by add_path(). */
@@ -4019,10 +4065,16 @@ add_foreign_grouping_paths(PlannerInfo *root, RelOptInfo *input_rel,
 										  grouped_rel,
 										  grouped_rel->reltarget,
 										  rows,
+#if PG_VERSION_NUM >= 170000
+										  0,	/* disabled_nodes */
+#endif
 										  startup_cost,
 										  total_cost,
 										  NIL,	/* no pathkeys */
 										  NULL,
+#if PG_VERSION_NUM >= 170000
+										  NIL,	/* no fdw_restrictinfo list */
+#endif
 										  NIL); /* no fdw_private */
 
 	/* Add generated path into grouped_rel by add_path(). */
@@ -4156,10 +4208,16 @@ add_foreign_ordered_paths(PlannerInfo *root, RelOptInfo *input_rel,
 											 input_rel,
 											 root->upper_targets[UPPERREL_ORDERED],
 											 rows,
+#if PG_VERSION_NUM >= 170000
+											 0,	/* disabled_nodes */
+#endif
 											 startup_cost,
 											 total_cost,
 											 root->sort_pathkeys,
 											 NULL,	/* no extra plan */
+#if PG_VERSION_NUM >= 170000
+											 NIL,	/* no fdw_restrictinfo list */
+#endif
 											 fdw_private);
 
 	/* and add it to the ordered_rel */
@@ -4271,10 +4329,16 @@ add_foreign_final_paths(PlannerInfo *root, RelOptInfo *input_rel,
 													   path->parent,
 													   path->pathtarget,
 													   path->rows,
+#if PG_VERSION_NUM >= 170000
+													   0,	/* disabled_nodes */
+#endif
 													   path->startup_cost,
 													   path->total_cost,
 													   path->pathkeys,
 													   NULL,	/* no extra plan */
+#if PG_VERSION_NUM >= 170000
+													   NIL,	/* no fdw_restrictinfo list */
+#endif
 													   NULL);	/* no fdw_private */
 
 				/* and add it to the final_rel */
@@ -4410,10 +4474,16 @@ add_foreign_final_paths(PlannerInfo *root, RelOptInfo *input_rel,
 										   input_rel,
 										   root->upper_targets[UPPERREL_FINAL],
 										   rows,
+#if PG_VERSION_NUM >= 170000
+										   0,	/* disabled_nodes */
+#endif
 										   startup_cost,
 										   total_cost,
 										   pathkeys,
 										   NULL,	/* no extra plan */
+#if PG_VERSION_NUM >= 170000
+										   NIL,	/* no fdw_restrictinfo list */
+#endif
 										   fdw_private);
 
 	/* and add it to the final_rel */

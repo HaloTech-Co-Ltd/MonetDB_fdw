@@ -9,7 +9,7 @@ MonetDB\_fdw 是基于 Foreign Data Wrapper （FDW） 技术的 PostgreSQL 扩�
 
 * RHEL 8/9、CentOS 8/9。
 * 羲和（Halo）数据库 1.0.14, 1.0.16
-* PostgreSQL 14至16版本 （预计将支持14以上的版本）
+* PostgreSQL 14至18版本
 * MonetDB 11.56（master版本）
 
 #### 源码编译安装
