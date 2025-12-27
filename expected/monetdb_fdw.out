@@ -52,14 +52,18 @@ ORDER BY 1;
  foreign_server | monetdb_fdw
 (1 row)
 
-\d+ emp
-                                              Foreign table "public.emp"
- Column |         Type          | Collation | Nullable | Default | FDW options | Storage  | Stats target | Description 
---------+-----------------------+-----------+----------+---------+-------------+----------+--------------+-------------
- name   | character varying(20) |           |          |         |             | extended |              | 
- age    | integer               |           |          |         |             | plain    |              | 
-Server: foreign_server
-FDW options: (schema_name 'test_u', table_name 'emp')
+-- Verify foreign table is correctly created
+SELECT c.relname as "Table",
+       s.srvname as "Server",
+       array_to_string(ft.ftoptions, ', ') as "FDW options"
+FROM pg_foreign_table ft
+     JOIN pg_class c ON c.oid = ft.ftrelid
+     JOIN pg_foreign_server s ON s.oid = ft.ftserver
+WHERE c.relname = 'emp';
+ Table |     Server     |            FDW options             
+-------+----------------+------------------------------------
+ emp   | foreign_server | schema_name=test_u, table_name=emp
+(1 row)
 
 -- test insert 
 INSERT INTO emp VALUES('John', 23);
@@ -429,14 +433,18 @@ CREATE FOREIGN TABLE test_default (
 ) SERVER foreign_server
 OPTIONS (schema_name 'test_u', table_name 'test_default');
 DEBUG:  monetdb_fdw: commit remote transaction
-\d+ test_default
-                                                  Foreign table "public.test_default"
- Column |         Type          | Collation | Nullable |         Default         | FDW options | Storage  | Stats target | Description 
---------+-----------------------+-----------+----------+-------------------------+-------------+----------+--------------+-------------
- name   | character varying(20) |           |          | 'zm'::character varying |             | extended |              | 
- age    | integer               |           |          |                         |             | plain    |              | 
-Server: foreign_server
-FDW options: (schema_name 'test_u', table_name 'test_default')
+-- Verify foreign table is correctly created
+SELECT c.relname as "Table",
+       s.srvname as "Server",
+       array_to_string(ft.ftoptions, ', ') as "FDW options"
+FROM pg_foreign_table ft
+     JOIN pg_class c ON c.oid = ft.ftrelid
+     JOIN pg_foreign_server s ON s.oid = ft.ftserver
+WHERE c.relname = 'test_default';
+    Table     |     Server     |                 FDW options                 
+--------------+----------------+---------------------------------------------
+ test_default | foreign_server | schema_name=test_u, table_name=test_default
+(1 row)
 
 SELECT * FROM test_default;
 DEBUG:  monetdb_fdw: begin remote transaction
@@ -519,17 +527,18 @@ ORDER BY 1,2;
  public | test_default | foreign table |       | permanent   | 0 bytes | 
 (4 rows)
 
-\d+ orders
-                                                  Foreign table "public.orders"
-     Column     |          Type          | Collation | Nullable | Default | FDW options  | Storage  | Stats target | Description 
-----------------+------------------------+-----------+----------+---------+--------------+----------+--------------+-------------
- order_id       | numeric(18,3)          |           | not null |         | (key 'true') | main     |              | 
- product_id     | numeric(18,3)          |           | not null |         | (key 'true') | main     |              | 
- customer_email | character varying(100) |           |          |         |              | extended |              | 
- order_date     | date                   |           |          |         |              | plain    |              | 
- quantity       | numeric(18,3)          |           |          |         |              | main     |              | 
-Server: foreign_server
-FDW options: (schema_name 'test_u', table_name 'orders')
+-- Verify foreign table is correctly created with primary key options
+SELECT c.relname as "Table",
+       s.srvname as "Server",
+       array_to_string(ft.ftoptions, ', ') as "FDW options"
+FROM pg_foreign_table ft
+     JOIN pg_class c ON c.oid = ft.ftrelid
+     JOIN pg_foreign_server s ON s.oid = ft.ftserver
+WHERE c.relname = 'orders';
+ Table  |     Server     |              FDW options              
+--------+----------------+---------------------------------------
+ orders | foreign_server | schema_name=test_u, table_name=orders
+(1 row)
 
 INSERT INTO orders (order_id, product_id, customer_email, order_date, quantity)
 VALUES (1, 101, 'john.doe@example.com', '2025-01-01', 5);

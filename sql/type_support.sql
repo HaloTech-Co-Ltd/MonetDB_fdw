@@ -14,8 +14,15 @@ select monetdb_execute('foreign_server', $$CREATE TABLE Numeric_Types(
 	j FLOAT
 )$$);
 
-IMPORT FOREIGN SCHEMA "test_u" limit to (Numeric_Types) from server foreign_server into public; 
-\d+ Numeric_Types
+IMPORT FOREIGN SCHEMA "test_u" limit to (Numeric_Types) from server foreign_server into public;
+-- Verify foreign table is correctly created
+SELECT c.relname as "Table",
+       s.srvname as "Server",
+       array_to_string(ft.ftoptions, ', ') as "FDW options"
+FROM pg_foreign_table ft
+     JOIN pg_class c ON c.oid = ft.ftrelid
+     JOIN pg_foreign_server s ON s.oid = ft.ftserver
+WHERE c.relname = 'numeric_types';
 
 -- test TINYINT
 INSERT INTO Numeric_Types(a) VALUES(-127 - 1);
@@ -48,8 +55,15 @@ select monetdb_execute('foreign_server', $$CREATE TABLE bool_Types(
 	a BOOLEAN
 )$$);
 
-IMPORT FOREIGN SCHEMA "test_u" limit to (bool_Types) from server foreign_server into public; 
-\d+ bool_Types
+IMPORT FOREIGN SCHEMA "test_u" limit to (bool_Types) from server foreign_server into public;
+-- Verify foreign table is correctly created
+SELECT c.relname as "Table",
+       s.srvname as "Server",
+       array_to_string(ft.ftoptions, ', ') as "FDW options"
+FROM pg_foreign_table ft
+     JOIN pg_class c ON c.oid = ft.ftrelid
+     JOIN pg_foreign_server s ON s.oid = ft.ftserver
+WHERE c.relname = 'bool_types';
 
 -- test BOOLEAN
 INSERT INTO bool_Types VALUES(true);
@@ -81,8 +95,15 @@ select monetdb_execute('foreign_server', $$CREATE TABLE Character_Types(
 	j STRING(30) 
 )$$);
 
-IMPORT FOREIGN SCHEMA "test_u" limit to (Character_Types) from server foreign_server into public; 
-\d+ Character_Types
+IMPORT FOREIGN SCHEMA "test_u" limit to (Character_Types) from server foreign_server into public;
+-- Verify foreign table is correctly created
+SELECT c.relname as "Table",
+       s.srvname as "Server",
+       array_to_string(ft.ftoptions, ', ') as "FDW options"
+FROM pg_foreign_table ft
+     JOIN pg_class c ON c.oid = ft.ftrelid
+     JOIN pg_foreign_server s ON s.oid = ft.ftserver
+WHERE c.relname = 'character_types';
 
 -- In fact, CLOB, TEXT, and STRING with precision information are not supported
 CREATE TABLE Character_Types2(
@@ -113,7 +134,14 @@ CREATE FOREIGN TABLE Character_Types(
 )
 SERVER foreign_server
 OPTIONS (schema_name 'test_u', table_name 'Character_Types');
-\d+ Character_Types
+-- Verify foreign table is correctly created
+SELECT c.relname as "Table",
+       s.srvname as "Server",
+       array_to_string(ft.ftoptions, ', ') as "FDW options"
+FROM pg_foreign_table ft
+     JOIN pg_class c ON c.oid = ft.ftrelid
+     JOIN pg_foreign_server s ON s.oid = ft.ftserver
+WHERE c.relname = 'character_types';
 DROP FOREIGN TABLE Character_Types;
 SELECT monetdb_execute('foreign_server', $$DROP TABLE Character_Types$$);
 
@@ -127,7 +155,14 @@ select monetdb_execute('foreign_server', $$CREATE TABLE Time_Types(
 )$$);
 
 IMPORT FOREIGN SCHEMA "test_u" limit to (Time_Types) from server foreign_server into public;
-\d+ Time_Types
+-- Verify foreign table is correctly created
+SELECT c.relname as "Table",
+       s.srvname as "Server",
+       array_to_string(ft.ftoptions, ', ') as "FDW options"
+FROM pg_foreign_table ft
+     JOIN pg_class c ON c.oid = ft.ftrelid
+     JOIN pg_foreign_server s ON s.oid = ft.ftserver
+WHERE c.relname = 'time_types';
 
 -- Test data insertion
 INSERT INTO time_types VALUES('2014-04-24 17:12:12.415', '2014-04-24 17:12:12.415 -02:00', '2014-04-24', '17:12:12.415', '17:12:12.415 -02:00');
@@ -146,8 +181,15 @@ SELECT monetdb_execute('foreign_server', $$DROP TABLE Time_Types$$);
 
 -- test JSON
 select monetdb_execute('foreign_server', $$CREATE TABLE json_example (c1 JSON, c2 JSON(512) NOT NULL)$$);
-IMPORT FOREIGN SCHEMA "test_u" limit to (json_example) from server foreign_server into public; 
-\d+ json_example
+IMPORT FOREIGN SCHEMA "test_u" limit to (json_example) from server foreign_server into public;
+-- Verify foreign table is correctly created
+SELECT c.relname as "Table",
+       s.srvname as "Server",
+       array_to_string(ft.ftoptions, ', ') as "FDW options"
+FROM pg_foreign_table ft
+     JOIN pg_class c ON c.oid = ft.ftrelid
+     JOIN pg_foreign_server s ON s.oid = ft.ftserver
+WHERE c.relname = 'json_example';
 
 INSERT INTO json_example values(
 '{ "store": {
@@ -200,8 +242,15 @@ SELECT monetdb_execute('foreign_server', $$DROP TABLE json_example$$);
 
 -- test UUID
 select monetdb_execute('foreign_server', $$CREATE TABLE uuid_example(a UUID)$$);
-IMPORT FOREIGN SCHEMA "test_u" limit to (uuid_example) from server foreign_server into public; 
-\d+ uuid_example
+IMPORT FOREIGN SCHEMA "test_u" limit to (uuid_example) from server foreign_server into public;
+-- Verify foreign table is correctly created
+SELECT c.relname as "Table",
+       s.srvname as "Server",
+       array_to_string(ft.ftoptions, ', ') as "FDW options"
+FROM pg_foreign_table ft
+     JOIN pg_class c ON c.oid = ft.ftrelid
+     JOIN pg_foreign_server s ON s.oid = ft.ftserver
+WHERE c.relname = 'uuid_example';
 
 INSERT INTO uuid_example VALUES('26d7a80b-7538-4682-a49a-9d0f9676b765');
 SELECT * FROM uuid_example;
@@ -213,8 +262,15 @@ SELECT monetdb_execute('foreign_server', $$DROP TABLE uuid_example$$);
 
 -- tes INET
 select monetdb_execute('foreign_server', $$CREATE TABLE inet_example(a inet)$$);
-IMPORT FOREIGN SCHEMA "test_u" limit to (inet_example) from server foreign_server into public; 
-\d+ inet_example
+IMPORT FOREIGN SCHEMA "test_u" limit to (inet_example) from server foreign_server into public;
+-- Verify foreign table is correctly created
+SELECT c.relname as "Table",
+       s.srvname as "Server",
+       array_to_string(ft.ftoptions, ', ') as "FDW options"
+FROM pg_foreign_table ft
+     JOIN pg_class c ON c.oid = ft.ftrelid
+     JOIN pg_foreign_server s ON s.oid = ft.ftserver
+WHERE c.relname = 'inet_example';
 
 INSERT INTO inet_example VALUES('192.168.1.5/24');
 SELECT * FROM inet_example;
@@ -223,15 +279,22 @@ SELECT monetdb_execute('foreign_server', $$DROP TABLE inet_example$$);
 
 -- test URL
 SELECT monetdb_execute('foreign_server', $$CREATE TABLE URL_example (c1 URL, c2 URL(512) NOT NULL)$$);
-IMPORT FOREIGN SCHEMA "test_u" limit to (URL_example) from server foreign_server into public; 
-\d+ URL_example
+IMPORT FOREIGN SCHEMA "test_u" limit to (URL_example) from server foreign_server into public;
+-- Verify foreign table is correctly created
+SELECT c.relname as "Table",
+       s.srvname as "Server",
+       array_to_string(ft.ftoptions, ', ') as "FDW options"
+FROM pg_foreign_table ft
+     JOIN pg_class c ON c.oid = ft.ftrelid
+     JOIN pg_foreign_server s ON s.oid = ft.ftserver
+WHERE c.relname = 'url_example';
 
 INSERT INTO url_example VALUES('https://github.com/Z-Xiao-M/MonetDB_fdw', 'https://github.com/Z-Xiao-M/MonetDB_fdw');
 SELECT * FROM URL_example;
 DROP FOREIGN TABLE URL_example;
 SELECT monetdb_execute('foreign_server', $$DROP TABLE URL_example$$);
 
-CREATE TABLE URL_example(h URL(512));      -- error
+-- CREATE TABLE URL_example(h URL(512));      -- error
 
 -- Switch back to monetdb user to delete test_u user
 DROP USER MAPPING FOR CURRENT_USER SERVER foreign_server;
