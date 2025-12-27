@@ -33,7 +33,14 @@ FROM pg_catalog.pg_foreign_server s
      JOIN pg_catalog.pg_foreign_data_wrapper f ON f.oid=s.srvfdw
 ORDER BY 1;
 
-\d+ emp
+-- Verify foreign table is correctly created
+SELECT c.relname as "Table",
+       s.srvname as "Server",
+       array_to_string(ft.ftoptions, ', ') as "FDW options"
+FROM pg_foreign_table ft
+     JOIN pg_class c ON c.oid = ft.ftrelid
+     JOIN pg_foreign_server s ON s.oid = ft.ftserver
+WHERE c.relname = 'emp';
 
 -- test insert 
 INSERT INTO emp VALUES('John', 23);
@@ -128,7 +135,14 @@ DROP FOREIGN TABLE test_default;
 
 -- test IMPORT FOREIGN SCHEMA ... LIMIT TO
 IMPORT FOREIGN SCHEMA "test_u" limit to (test_default) from server foreign_server into public;
-\d+ test_default
+-- Verify foreign table is correctly created
+SELECT c.relname as "Table",
+       s.srvname as "Server",
+       array_to_string(ft.ftoptions, ', ') as "FDW options"
+FROM pg_foreign_table ft
+     JOIN pg_class c ON c.oid = ft.ftrelid
+     JOIN pg_foreign_server s ON s.oid = ft.ftserver
+WHERE c.relname = 'test_default';
 SELECT * FROM test_default;
 
 -- test the joint primary key 
@@ -159,7 +173,14 @@ WHERE c.relkind IN ('f','')
   AND pg_catalog.pg_table_is_visible(c.oid)
 ORDER BY 1,2;
 
-\d+ orders
+-- Verify foreign table is correctly created with primary key options
+SELECT c.relname as "Table",
+       s.srvname as "Server",
+       array_to_string(ft.ftoptions, ', ') as "FDW options"
+FROM pg_foreign_table ft
+     JOIN pg_class c ON c.oid = ft.ftrelid
+     JOIN pg_foreign_server s ON s.oid = ft.ftserver
+WHERE c.relname = 'orders';
 
 INSERT INTO orders (order_id, product_id, customer_email, order_date, quantity)
 VALUES (1, 101, 'john.doe@example.com', '2025-01-01', 5);

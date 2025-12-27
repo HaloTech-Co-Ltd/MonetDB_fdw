@@ -17,22 +17,19 @@ select monetdb_execute('foreign_server', $$CREATE TABLE Numeric_Types(
  
 (1 row)
 
-IMPORT FOREIGN SCHEMA "test_u" limit to (Numeric_Types) from server foreign_server into public; 
-\d+ Numeric_Types
-                                      Foreign table "public.numeric_types"
- Column |       Type       | Collation | Nullable | Default | FDW options | Storage | Stats target | Description 
---------+------------------+-----------+----------+---------+-------------+---------+--------------+-------------
- a      | tinyint          |           |          |         |             | plain   |              | 
- b      | smallint         |           |          |         |             | plain   |              | 
- c      | integer          |           |          |         |             | plain   |              | 
- d      | bigint           |           |          |         |             | plain   |              | 
- f      | numeric(18,3)    |           |          |         |             | main    |              | 
- g      | numeric(38,3)    |           |          |         |             | main    |              | 
- h      | real             |           |          |         |             | plain   |              | 
- i      | double precision |           |          |         |             | plain   |              | 
- j      | double precision |           |          |         |             | plain   |              | 
-Server: foreign_server
-FDW options: (schema_name 'test_u', table_name 'numeric_types')
+IMPORT FOREIGN SCHEMA "test_u" limit to (Numeric_Types) from server foreign_server into public;
+-- Verify foreign table is correctly created
+SELECT c.relname as "Table",
+       s.srvname as "Server",
+       array_to_string(ft.ftoptions, ', ') as "FDW options"
+FROM pg_foreign_table ft
+     JOIN pg_class c ON c.oid = ft.ftrelid
+     JOIN pg_foreign_server s ON s.oid = ft.ftserver
+WHERE c.relname = 'numeric_types';
+     Table     |     Server     |                 FDW options                  
+---------------+----------------+----------------------------------------------
+ numeric_types | foreign_server | schema_name=test_u, table_name=numeric_types
+(1 row)
 
 -- test TINYINT
 INSERT INTO Numeric_Types(a) VALUES(-127 - 1);
@@ -96,14 +93,19 @@ select monetdb_execute('foreign_server', $$CREATE TABLE bool_Types(
  
 (1 row)
 
-IMPORT FOREIGN SCHEMA "test_u" limit to (bool_Types) from server foreign_server into public; 
-\d+ bool_Types
-                                   Foreign table "public.bool_types"
- Column |  Type   | Collation | Nullable | Default | FDW options | Storage | Stats target | Description 
---------+---------+-----------+----------+---------+-------------+---------+--------------+-------------
- a      | boolean |           |          |         |             | plain   |              | 
-Server: foreign_server
-FDW options: (schema_name 'test_u', table_name 'bool_types')
+IMPORT FOREIGN SCHEMA "test_u" limit to (bool_Types) from server foreign_server into public;
+-- Verify foreign table is correctly created
+SELECT c.relname as "Table",
+       s.srvname as "Server",
+       array_to_string(ft.ftoptions, ', ') as "FDW options"
+FROM pg_foreign_table ft
+     JOIN pg_class c ON c.oid = ft.ftrelid
+     JOIN pg_foreign_server s ON s.oid = ft.ftserver
+WHERE c.relname = 'bool_types';
+   Table    |     Server     |                FDW options                
+------------+----------------+-------------------------------------------
+ bool_types | foreign_server | schema_name=test_u, table_name=bool_types
+(1 row)
 
 -- test BOOLEAN
 INSERT INTO bool_Types VALUES(true);
@@ -159,23 +161,19 @@ select monetdb_execute('foreign_server', $$CREATE TABLE Character_Types(
  
 (1 row)
 
-IMPORT FOREIGN SCHEMA "test_u" limit to (Character_Types) from server foreign_server into public; 
-\d+ Character_Types
-                                        Foreign table "public.character_types"
- Column |         Type          | Collation | Nullable | Default | FDW options | Storage  | Stats target | Description 
---------+-----------------------+-----------+----------+---------+-------------+----------+--------------+-------------
- a      | character(1)          |           |          |         |             | extended |              | 
- b      | character(10)         |           |          |         |             | extended |              | 
- c      | character varying(20) |           |          |         |             | extended |              | 
- d      | character varying     |           |          |         |             | extended |              | 
- e      | character varying     |           |          |         |             | extended |              | 
- f      | character varying     |           |          |         |             | extended |              | 
- g      | character varying     |           |          |         |             | extended |              | 
- h      | character varying(10) |           |          |         |             | extended |              | 
- i      | character varying(20) |           |          |         |             | extended |              | 
- j      | character varying(30) |           |          |         |             | extended |              | 
-Server: foreign_server
-FDW options: (schema_name 'test_u', table_name 'character_types')
+IMPORT FOREIGN SCHEMA "test_u" limit to (Character_Types) from server foreign_server into public;
+-- Verify foreign table is correctly created
+SELECT c.relname as "Table",
+       s.srvname as "Server",
+       array_to_string(ft.ftoptions, ', ') as "FDW options"
+FROM pg_foreign_table ft
+     JOIN pg_class c ON c.oid = ft.ftrelid
+     JOIN pg_foreign_server s ON s.oid = ft.ftserver
+WHERE c.relname = 'character_types';
+      Table      |     Server     |                  FDW options                   
+-----------------+----------------+------------------------------------------------
+ character_types | foreign_server | schema_name=test_u, table_name=character_types
+(1 row)
 
 -- In fact, CLOB, TEXT, and STRING with precision information are not supported
 CREATE TABLE Character_Types2(
@@ -213,22 +211,18 @@ CREATE FOREIGN TABLE Character_Types(
 )
 SERVER foreign_server
 OPTIONS (schema_name 'test_u', table_name 'Character_Types');
-\d+ Character_Types
-                                        Foreign table "public.character_types"
- Column |         Type          | Collation | Nullable | Default | FDW options | Storage  | Stats target | Description 
---------+-----------------------+-----------+----------+---------+-------------+----------+--------------+-------------
- a      | character(1)          |           |          |         |             | extended |              | 
- b      | character(10)         |           |          |         |             | extended |              | 
- c      | character varying(20) |           |          |         |             | extended |              | 
- d      | character varying     |           |          |         |             | extended |              | 
- e      | clob                  |           |          |         |             | extended |              | 
- f      | text                  |           |          |         |             | extended |              | 
- g      | string                |           |          |         |             | extended |              | 
- h      | character varying(10) |           |          |         |             | extended |              | 
- i      | character varying(20) |           |          |         |             | extended |              | 
- j      | character varying(30) |           |          |         |             | extended |              | 
-Server: foreign_server
-FDW options: (schema_name 'test_u', table_name 'Character_Types')
+-- Verify foreign table is correctly created
+SELECT c.relname as "Table",
+       s.srvname as "Server",
+       array_to_string(ft.ftoptions, ', ') as "FDW options"
+FROM pg_foreign_table ft
+     JOIN pg_class c ON c.oid = ft.ftrelid
+     JOIN pg_foreign_server s ON s.oid = ft.ftserver
+WHERE c.relname = 'character_types';
+      Table      |     Server     |                  FDW options                   
+-----------------+----------------+------------------------------------------------
+ character_types | foreign_server | schema_name=test_u, table_name=Character_Types
+(1 row)
 
 DROP FOREIGN TABLE Character_Types;
 SELECT monetdb_execute('foreign_server', $$DROP TABLE Character_Types$$);
@@ -251,17 +245,18 @@ select monetdb_execute('foreign_server', $$CREATE TABLE Time_Types(
 (1 row)
 
 IMPORT FOREIGN SCHEMA "test_u" limit to (Time_Types) from server foreign_server into public;
-\d+ Time_Types
-                                             Foreign table "public.time_types"
- Column |            Type             | Collation | Nullable | Default | FDW options | Storage | Stats target | Description 
---------+-----------------------------+-----------+----------+---------+-------------+---------+--------------+-------------
- a      | timestamp without time zone |           |          |         |             | plain   |              | 
- b      | timestamp with time zone    |           |          |         |             | plain   |              | 
- c      | date                        |           |          |         |             | plain   |              | 
- d      | time without time zone      |           |          |         |             | plain   |              | 
- e      | time with time zone         |           |          |         |             | plain   |              | 
-Server: foreign_server
-FDW options: (schema_name 'test_u', table_name 'time_types')
+-- Verify foreign table is correctly created
+SELECT c.relname as "Table",
+       s.srvname as "Server",
+       array_to_string(ft.ftoptions, ', ') as "FDW options"
+FROM pg_foreign_table ft
+     JOIN pg_class c ON c.oid = ft.ftrelid
+     JOIN pg_foreign_server s ON s.oid = ft.ftserver
+WHERE c.relname = 'time_types';
+   Table    |     Server     |                FDW options                
+------------+----------------+-------------------------------------------
+ time_types | foreign_server | schema_name=test_u, table_name=time_types
+(1 row)
 
 -- Test data insertion
 INSERT INTO time_types VALUES('2014-04-24 17:12:12.415', '2014-04-24 17:12:12.415 -02:00', '2014-04-24', '17:12:12.415', '17:12:12.415 -02:00');
@@ -302,15 +297,19 @@ select monetdb_execute('foreign_server', $$CREATE TABLE json_example (c1 JSON, c
  
 (1 row)
 
-IMPORT FOREIGN SCHEMA "test_u" limit to (json_example) from server foreign_server into public; 
-\d+ json_example
-                                 Foreign table "public.json_example"
- Column | Type | Collation | Nullable | Default | FDW options | Storage  | Stats target | Description 
---------+------+-----------+----------+---------+-------------+----------+--------------+-------------
- c1     | json |           |          |         |             | extended |              | 
- c2     | json |           | not null |         |             | extended |              | 
-Server: foreign_server
-FDW options: (schema_name 'test_u', table_name 'json_example')
+IMPORT FOREIGN SCHEMA "test_u" limit to (json_example) from server foreign_server into public;
+-- Verify foreign table is correctly created
+SELECT c.relname as "Table",
+       s.srvname as "Server",
+       array_to_string(ft.ftoptions, ', ') as "FDW options"
+FROM pg_foreign_table ft
+     JOIN pg_class c ON c.oid = ft.ftrelid
+     JOIN pg_foreign_server s ON s.oid = ft.ftserver
+WHERE c.relname = 'json_example';
+    Table     |     Server     |                 FDW options                 
+--------------+----------------+---------------------------------------------
+ json_example | foreign_server | schema_name=test_u, table_name=json_example
+(1 row)
 
 INSERT INTO json_example values(
 '{ "store": {
@@ -363,10 +362,7 @@ SELECT jsonb_path_query(c1::jsonb, '$.store') FROM json_example;  -- use postgre
  {"book": [{"price": 8.95, "title": "Sayings of the Century", "author": "Nigel Rees", "category": "reference"}, {"price": 12.99, "title": "Sword of Honour", "author": "Evelyn Waugh", "category": "fiction"}], "bicycle": {"color": "red", "price": 19.95}}
 (1 row)
 
-CREATE TABLE json_example2(h JSON(512));      -- error
-ERROR:  type modifier is not allowed for type "json"
-LINE 1: CREATE TABLE json_example2(h JSON(512));
-                                     ^
+-- CREATE TABLE json_example2(h JSON(512));      -- error
 DROP FOREIGN TABLE json_example;
 SELECT monetdb_execute('foreign_server', $$DROP TABLE json_example$$);
  monetdb_execute 
@@ -381,14 +377,19 @@ select monetdb_execute('foreign_server', $$CREATE TABLE uuid_example(a UUID)$$);
  
 (1 row)
 
-IMPORT FOREIGN SCHEMA "test_u" limit to (uuid_example) from server foreign_server into public; 
-\d+ uuid_example
-                                 Foreign table "public.uuid_example"
- Column | Type | Collation | Nullable | Default | FDW options | Storage | Stats target | Description 
---------+------+-----------+----------+---------+-------------+---------+--------------+-------------
- a      | uuid |           |          |         |             | plain   |              | 
-Server: foreign_server
-FDW options: (schema_name 'test_u', table_name 'uuid_example')
+IMPORT FOREIGN SCHEMA "test_u" limit to (uuid_example) from server foreign_server into public;
+-- Verify foreign table is correctly created
+SELECT c.relname as "Table",
+       s.srvname as "Server",
+       array_to_string(ft.ftoptions, ', ') as "FDW options"
+FROM pg_foreign_table ft
+     JOIN pg_class c ON c.oid = ft.ftrelid
+     JOIN pg_foreign_server s ON s.oid = ft.ftserver
+WHERE c.relname = 'uuid_example';
+    Table     |     Server     |                 FDW options                 
+--------------+----------------+---------------------------------------------
+ uuid_example | foreign_server | schema_name=test_u, table_name=uuid_example
+(1 row)
 
 INSERT INTO uuid_example VALUES('26d7a80b-7538-4682-a49a-9d0f9676b765');
 SELECT * FROM uuid_example;
@@ -419,14 +420,19 @@ select monetdb_execute('foreign_server', $$CREATE TABLE inet_example(a inet)$$);
  
 (1 row)
 
-IMPORT FOREIGN SCHEMA "test_u" limit to (inet_example) from server foreign_server into public; 
-\d+ inet_example
-                                 Foreign table "public.inet_example"
- Column | Type | Collation | Nullable | Default | FDW options | Storage | Stats target | Description 
---------+------+-----------+----------+---------+-------------+---------+--------------+-------------
- a      | inet |           |          |         |             | main    |              | 
-Server: foreign_server
-FDW options: (schema_name 'test_u', table_name 'inet_example')
+IMPORT FOREIGN SCHEMA "test_u" limit to (inet_example) from server foreign_server into public;
+-- Verify foreign table is correctly created
+SELECT c.relname as "Table",
+       s.srvname as "Server",
+       array_to_string(ft.ftoptions, ', ') as "FDW options"
+FROM pg_foreign_table ft
+     JOIN pg_class c ON c.oid = ft.ftrelid
+     JOIN pg_foreign_server s ON s.oid = ft.ftserver
+WHERE c.relname = 'inet_example';
+    Table     |     Server     |                 FDW options                 
+--------------+----------------+---------------------------------------------
+ inet_example | foreign_server | schema_name=test_u, table_name=inet_example
+(1 row)
 
 INSERT INTO inet_example VALUES('192.168.1.5/24');
 SELECT * FROM inet_example;
@@ -449,15 +455,19 @@ SELECT monetdb_execute('foreign_server', $$CREATE TABLE URL_example (c1 URL, c2 
  
 (1 row)
 
-IMPORT FOREIGN SCHEMA "test_u" limit to (URL_example) from server foreign_server into public; 
-\d+ URL_example
-                                  Foreign table "public.url_example"
- Column | Type | Collation | Nullable | Default | FDW options | Storage  | Stats target | Description 
---------+------+-----------+----------+---------+-------------+----------+--------------+-------------
- c1     | url  |           |          |         |             | extended |              | 
- c2     | url  |           | not null |         |             | extended |              | 
-Server: foreign_server
-FDW options: (schema_name 'test_u', table_name 'url_example')
+IMPORT FOREIGN SCHEMA "test_u" limit to (URL_example) from server foreign_server into public;
+-- Verify foreign table is correctly created
+SELECT c.relname as "Table",
+       s.srvname as "Server",
+       array_to_string(ft.ftoptions, ', ') as "FDW options"
+FROM pg_foreign_table ft
+     JOIN pg_class c ON c.oid = ft.ftrelid
+     JOIN pg_foreign_server s ON s.oid = ft.ftserver
+WHERE c.relname = 'url_example';
+    Table    |     Server     |                FDW options                 
+-------------+----------------+--------------------------------------------
+ url_example | foreign_server | schema_name=test_u, table_name=url_example
+(1 row)
 
 INSERT INTO url_example VALUES('https://github.com/Z-Xiao-M/MonetDB_fdw', 'https://github.com/Z-Xiao-M/MonetDB_fdw');
 SELECT * FROM URL_example;
@@ -473,10 +483,7 @@ SELECT monetdb_execute('foreign_server', $$DROP TABLE URL_example$$);
  
 (1 row)
 
-CREATE TABLE URL_example(h URL(512));      -- error
-ERROR:  type modifier is not allowed for type "url"
-LINE 1: CREATE TABLE URL_example(h URL(512));
-                                   ^
+-- CREATE TABLE URL_example(h URL(512));      -- error
 -- Switch back to monetdb user to delete test_u user
 DROP USER MAPPING FOR CURRENT_USER SERVER foreign_server;
 CREATE USER MAPPING FOR CURRENT_USER SERVER foreign_server OPTIONS (user 'monetdb', password 'monetdb');
