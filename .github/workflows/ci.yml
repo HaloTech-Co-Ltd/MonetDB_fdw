@@ -176,7 +176,6 @@ jobs:
           cat regression.diffs || true
           exit 1
         }
-      continue-on-error: true
 
     - name: Cleanup MonetDB server
       if: always()
