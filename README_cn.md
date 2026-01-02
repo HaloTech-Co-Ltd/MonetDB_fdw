@@ -7,7 +7,7 @@ MonetDB\_fdw 是基于 Foreign Data Wrapper （FDW） 技术的 PostgreSQL 扩�
 
 #### 支持的操作系统和数据库
 
-* RHEL 8/9、CentOS 8/9。
+* RHEL 8/9、CentOS 8/9，Ubuntu
 * 羲和（Halo）数据库 1.0.14, 1.0.16
 * PostgreSQL 14至18版本
 * MonetDB 11.56（master版本）
@@ -94,9 +94,9 @@ make && make install
 * COPY
 * TRUNCATE
 * EXPLAIN
-* IMPORT FOREIGN SCHEMA。
+* IMPORT FOREIGN SCHEMA
 
-以及相关的RETURNING语句，有趣的是当前版本的MonetDB在UPDATE ... RETURNING场景暂时还存在[BUG](https://github.com/MonetDB/MonetDB/issues/7623)，所以让我们静待下一个MonetDB版本，请不要在当前系统中使用UPDATE ... RETURNING。
+以及相关的RETURNING语句。
 
 #### 类型
 

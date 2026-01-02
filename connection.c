@@ -3,7 +3,7 @@
  * connection.c
  *		  Connection management functions for monetdb_fdw
  *
- * Portions Copyright (c) 2025, Halo Tech Co.,Ltd. All rights reserved.
+ * Portions Copyright (c) 2025-2026, Halo Tech Co.,Ltd. All rights reserved.
  * Portions Copyright (c) 2012-2023, PostgreSQL Global Development Group
  * 
  * Author: zengman <zengman@halodbtech.com>

@@ -8,7 +8,7 @@ The work based on the excellent oracle_fdw (https://github.com/laurenz/oracle_fd
 
 ### Supported OS & Database Versions
 
-* RHEL 8/9, CentOS 8/9
+* RHEL 8/9, CentOS 8/9，Ubuntu
 * Halo 1.0.14, 1.0.16
 * PostgreSQL 14, 15, 16, 17, 18
 * MonetDB 11.56
@@ -104,8 +104,6 @@ IMPORT FOREIGN SCHEMA "zm" limit to (emp) from server foreign_server into public
 * TRUNCATE
 * EXPLAIN
 * IMPORT FOREIGN SCHEMA
-
-Be careful!!! There is a crash bug of UPDATE ... RETURNING in MonetDB (https://github.com/MonetDB/MonetDB/issues/7623) if table has PK.
 
 #### Supported Types
 
